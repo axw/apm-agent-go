@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/elastic/apm-agent-go"
+	"github.com/elastic/apm-agent-go/module/apmpprof"
 )
 
 // Wrap returns an http.Handler wrapping h, reporting each request as
@@ -68,7 +69,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		SetTransactionContext(tx, req, resp, body, finished)
 	}()
-	h.handler.ServeHTTP(w, req)
+	apmpprof.Do(ctx, func(ctx context.Context) {
+		h.handler.ServeHTTP(w, req)
+	})
 	finished = true
 }
 
