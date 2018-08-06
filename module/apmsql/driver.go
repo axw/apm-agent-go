@@ -55,6 +55,14 @@ func Wrap(driver driver.Driver, opts ...WrapOption) driver.Driver {
 	return d
 }
 
+// IsWrapped reports whether the given driver has been wrapped with
+// this package's Wrap method. Note that this only checks the type
+// of driver; it will not attempt to traverse any other instrumentation.
+func IsWrapped(driver driver.Driver) bool {
+	_, ok := driver.(*tracingDriver)
+	return ok
+}
+
 // WrapOption is an option that can be supplied to Wrap.
 type WrapOption func(*tracingDriver)
 
