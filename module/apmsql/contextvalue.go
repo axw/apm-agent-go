@@ -36,11 +36,11 @@ type namedValueChecker interface {
 	CheckNamedValue(*driver.NamedValue) error
 }
 
-func checkNamedValue(nv *driver.NamedValue, next namedValueChecker) error {
-	if _, ok := nv.Value.(contextValue); ok {
+func checkNamedValue(nv *driver.NamedValue, next namedValueChecker) (context.Context, error) {
+	if ctxVal, ok := nv.Value.(contextValue); ok {
 		// We extend the driver such that it supports
 		// passing context via a ContextValue arg.
-		return nil
+		return ctxVal.Context, driver.ErrRemoveArgument
 	}
 	if next != nil {
 		return next.CheckNamedValue(nv)
@@ -59,22 +59,22 @@ func extractContext(ctx context.Context, args *[]driver.NamedValue) context.Cont
 			if isBackground {
 				ctx = ctxVal.Context
 			}
-			if ctxVal.remove {
-				ordinal := arg.Ordinal
-				if i+1 < len(*args) {
-					copy((*args)[i:], (*args)[i+1:])
-				}
-				*args = (*args)[:len(*args)-1]
-				for i, arg := range *args {
-					if arg.Ordinal > ordinal {
-						arg.Ordinal--
-						(*args)[i] = arg
-					}
-				}
-				i--
-			} else {
+			if !ctxVal.remove && i+1 < len(*args) {
 				(*args)[i].Value = ""
+				continue
 			}
+			ordinal := arg.Ordinal
+			if i+1 < len(*args) {
+				copy((*args)[i:], (*args)[i+1:])
+			}
+			*args = (*args)[:len(*args)-1]
+			for i, arg := range *args {
+				if arg.Ordinal > ordinal {
+					arg.Ordinal--
+					(*args)[i] = arg
+				}
+			}
+			i--
 		}
 	}
 	return ctx

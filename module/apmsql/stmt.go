@@ -83,5 +83,6 @@ func (s *stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (_ dr
 }
 
 func (s *stmt) CheckNamedValue(nv *driver.NamedValue) error {
-	return checkNamedValue(nv, s.namedValueChecker)
+	_, err := checkNamedValue(nv, s.namedValueChecker)
+	return err
 }

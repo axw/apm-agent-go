@@ -70,10 +70,7 @@ func afterCallback(scope *gorm.Scope) {
 	if !ok {
 		return
 	}
-	span := elasticapm.SpanFromContext(ctx)
-	if span == nil {
-		return
-	}
+	fmt.Println("SQL:", scope.SQL, scope.SQLVars)
 	span.End()
 	scope.SQLVars = scope.SQLVars[:len(scope.SQLVars)-1]
 }
