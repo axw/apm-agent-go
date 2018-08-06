@@ -2,7 +2,6 @@ package apmgorm
 
 import (
 	"database/sql"
-	"fmt"
 
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
@@ -48,46 +47,4 @@ func Open(dialect string, args ...interface{}) (*gorm.DB, error) {
 	}
 	RegisterCallbacks(db)
 	return db, nil
-}
-
-type instrumentedDialect struct {
-	gorm.Dialect
-}
-
-// RegisterCallbacks registers callbacks on db for reporting spans
-// to Elastic APM. This is called automatically by apmgorm.Open;
-// it is provided for cases where a *gorm.DB is acquired by other
-// means.
-func RegisterCallbacks(db *gorm.DB) {
-	const callbackPrefix = "elasticapm"
-
-	callbackProcessors := map[string]func() *gorm.CallbackProcessor{
-		"gorm:create": func() *gorm.CallbackProcessor { return db.Callback().Create() },
-		"gorm:delete": func() *gorm.CallbackProcessor { return db.Callback().Delete() },
-		"gorm:query":  func() *gorm.CallbackProcessor { return db.Callback().Query() },
-		"gorm:update": func() *gorm.CallbackProcessor { return db.Callback().Update() },
-	}
-	for name, processor := range callbackProcessors {
-		processor().Before(name).Register(fmt.Sprintf("%s:before:%s", callbackPrefix, name), beforeCallback)
-		processor().After(name).Register(fmt.Sprintf("%s:after:%s", callbackPrefix, name), afterCallback)
-	}
-}
-
-func beforeCallback(scope *gorm.Scope) {
-	ctx, ok := scopeContext(scope)
-	if !ok {
-		return
-	}
-	// TODO(axw) create a span for gorm, add the
-	// resulting span context to the vars.
-	placeholder := scope.Dialect().BindVar(len(scope.SQLVars) + 1)
-	remove := placeholder == "$$$"
-	scope.SQLVars = append(scope.SQLVars, apmsql.ContextValue(ctx, remove))
-}
-
-func afterCallback(scope *gorm.Scope) {
-	if _, ok := scopeContext(scope); !ok {
-		return
-	}
-	scope.SQLVars = scope.SQLVars[:len(scope.SQLVars)-1]
 }

@@ -37,11 +37,29 @@ func TestWithContext(t *testing.T) {
 		db.Unscoped().Delete(&product) // hard
 	})
 	require.NotEmpty(t, tx.Spans)
-	require.Len(t, tx.Spans, 6)
-	assert.Equal(t, "INSERT INTO products", tx.Spans[0].Name)
-	assert.Equal(t, "SELECT FROM products", tx.Spans[1].Name)
-	assert.Equal(t, "SELECT FROM products", tx.Spans[2].Name)
-	assert.Equal(t, "UPDATE products", tx.Spans[3].Name)
-	assert.Equal(t, "UPDATE products", tx.Spans[4].Name)
-	assert.Equal(t, "DELETE FROM products", tx.Spans[5].Name)
+
+	spanNames := make([]string, len(tx.Spans))
+	for i, span := range tx.Spans {
+		spanNames[i] = span.Name
+	}
+	assert.Equal(t, []string{
+		"gorm:create products",
+		"INSERT INTO products",
+
+		"gorm:query products",
+		"SELECT FROM products",
+
+		"gorm:query products",
+		"SELECT FROM products",
+
+		"gorm:update products",
+		"UPDATE products",
+
+		// soft delete
+		"gorm:delete products",
+		"UPDATE products",
+
+		"gorm:delete products",
+		"DELETE FROM products",
+	}, spanNames)
 }
