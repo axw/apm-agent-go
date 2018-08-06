@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jinzhu/gorm"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/elastic/apm-agent-go/apmtest"
@@ -23,23 +24,24 @@ func TestWithContext(t *testing.T) {
 		db, err := apmgorm.Open("sqlite3", ":memory:")
 		require.NoError(t, err)
 		defer db.Close()
+		db = apmgorm.WithContext(ctx, db)
 
-		// Migrate the schema
 		db.AutoMigrate(&Product{})
-
-		// Create
 		db.Create(&Product{Code: "L1212", Price: 1000})
 
-		// Read
 		var product Product
 		db.First(&product, 1)                   // find product with id 1
 		db.First(&product, "code = ?", "L1212") // find product with code l1212
-
-		// Update - update product's price to 2000
 		db.Model(&product).Update("Price", 2000)
-
-		// Delete - delete product
-		db.Delete(&product)
+		db.Delete(&product)            // soft
+		db.Unscoped().Delete(&product) // hard
 	})
-	_ = tx
+	require.NotEmpty(t, tx.Spans)
+	require.Len(t, tx.Spans, 6)
+	assert.Equal(t, "INSERT INTO products", tx.Spans[0].Name)
+	assert.Equal(t, "SELECT FROM products", tx.Spans[1].Name)
+	assert.Equal(t, "SELECT FROM products", tx.Spans[2].Name)
+	assert.Equal(t, "UPDATE products", tx.Spans[3].Name)
+	assert.Equal(t, "UPDATE products", tx.Spans[4].Name)
+	assert.Equal(t, "DELETE FROM products", tx.Spans[5].Name)
 }

@@ -61,16 +61,15 @@ type instrumentedDialect struct {
 func RegisterCallbacks(db *gorm.DB) {
 	const callbackPrefix = "elasticapm"
 
-	callback := db.Callback()
-	callbackProcessors := map[string]*gorm.CallbackProcessor{
-		"gorm:create": callback.Create(),
-		"gorm:delete": callback.Delete(),
-		"gorm:query":  callback.Query(),
-		"gorm:update": callback.Update(),
+	callbackProcessors := map[string]func() *gorm.CallbackProcessor{
+		"gorm:create": func() *gorm.CallbackProcessor { return db.Callback().Create() },
+		"gorm:delete": func() *gorm.CallbackProcessor { return db.Callback().Delete() },
+		"gorm:query":  func() *gorm.CallbackProcessor { return db.Callback().Query() },
+		"gorm:update": func() *gorm.CallbackProcessor { return db.Callback().Update() },
 	}
 	for name, processor := range callbackProcessors {
-		processor.Before(name).Register(fmt.Sprintf("%s:before:%s", callbackPrefix, name), beforeCallback)
-		processor.After(name).Register(fmt.Sprintf("%s:after:%s", callbackPrefix, name), afterCallback)
+		processor().Before(name).Register(fmt.Sprintf("%s:before:%s", callbackPrefix, name), beforeCallback)
+		processor().After(name).Register(fmt.Sprintf("%s:after:%s", callbackPrefix, name), afterCallback)
 	}
 }
 
@@ -81,7 +80,9 @@ func beforeCallback(scope *gorm.Scope) {
 	}
 	// TODO(axw) create a span for gorm, add the
 	// resulting span context to the vars.
-	scope.SQLVars = append(scope.SQLVars, apmsql.ContextValue{Context: ctx})
+	placeholder := scope.Dialect().BindVar(len(scope.SQLVars) + 1)
+	remove := placeholder == "$$$"
+	scope.SQLVars = append(scope.SQLVars, apmsql.ContextValue(ctx, remove))
 }
 
 func afterCallback(scope *gorm.Scope) {

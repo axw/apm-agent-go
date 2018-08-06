@@ -8,10 +8,10 @@ import (
 
 const apmContextKey = "elasticapm:context"
 
-// TODO
+// WithContext returns a copy of db with ctx recorded for use by
+// the callbacks registered via RegisterCallbacks.
 func WithContext(ctx context.Context, db *gorm.DB) *gorm.DB {
-	db = db.Set(apmContextKey, ctx)
-	return db
+	return db.Set(apmContextKey, ctx)
 }
 
 func scopeContext(scope *gorm.Scope) (context.Context, bool) {
