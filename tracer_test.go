@@ -44,7 +44,7 @@ func TestTracerFlushInterval(t *testing.T) {
 	defer tracer.Close()
 	tracer.Transport = transporttest.Discard
 
-	interval := time.Second
+	interval := 2 * time.Second
 	tracer.SetFlushInterval(interval)
 
 	before := time.Now()
@@ -53,7 +53,7 @@ func TestTracerFlushInterval(t *testing.T) {
 	for tracer.Stats().TransactionsSent == 0 {
 		time.Sleep(10 * time.Millisecond)
 	}
-	assert.WithinDuration(t, before.Add(interval), time.Now(), 100*time.Millisecond)
+	assert.WithinDuration(t, before.Add(interval), time.Now(), 200*time.Millisecond)
 }
 
 func TestTracerMaxQueueSize(t *testing.T) {
