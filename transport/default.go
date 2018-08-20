@@ -1,44 +1,40 @@
 package transport
 
-import (
-	"github.com/elastic/apm-agent-go/internal/apmdebug"
-)
-
 var (
-	// Default is the default Transport, using the
+	// Default is the default StreamSender, using the
 	// ELASTIC_APM_* environment variables.
 	//
 	// If ELASTIC_APM_SERVER_URL is set to an invalid
-	// location, Default will be set to a transport
+	// location, Default will be set to a StreamSender
 	// returning an error for every operation.
-	Default Transport
+	Default StreamSender
 
-	// Discard is a Transport on which all operations
+	// Discard is a StreamSender on which all operations
 	// succeed without doing anything.
-	Discard = discardTransport{}
+	Discard = discardStreamSender{}
 )
 
 func init() {
 	_, _ = InitDefault()
 }
 
-// InitDefault (re-)initializes Default, the default transport, returning
-// its new value along with the error that will be returned by the transport
-// if the environment variable configuration is invalid. The Transport returned
-// is always non-nil.
-func InitDefault() (Transport, error) {
+// InitDefault (re-)initializes Default, the default StreamSender, returning
+// its new value along with the error that will be returned by the StreamSender
+// if the environment variable configuration is invalid. The result is always
+// non-nil.
+func InitDefault() (StreamSender, error) {
 	t, err := getDefault()
-	if apmdebug.TraceTransport {
-		t = &debugTransport{transport: t}
-	}
+	//if apmdebug.TraceTransport {
+	//t = &debugTransport{transport: t}
+	//}
 	Default = t
 	return t, err
 }
 
-func getDefault() (Transport, error) {
-	t, err := NewHTTPTransport("", "")
+func getDefault() (StreamSender, error) {
+	s, err := NewHTTPTransport("", "")
 	if err != nil {
-		return discardTransport{err}, err
+		return discardStreamSender{err}, err
 	}
-	return t, nil
+	return s, nil
 }
