@@ -4,10 +4,10 @@ import (
 	"context"
 )
 
-type discardStreamSender struct {
+type discardTransport struct {
 	err error
 }
 
-func (s discardStreamSender) SendStream(context.Context, *Stream) error {
+func (s discardTransport) SendStream(context.Context, *Stream) error {
 	return s.err
 }

@@ -8,7 +8,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/elastic/apm-agent-go/model"
 	"github.com/elastic/apm-agent-go/transport"
 )
 
@@ -24,7 +23,10 @@ func TestInitDefault(t *testing.T) {
 	assert.NotNil(t, tr)
 	assert.Exactly(t, tr, transport.Default)
 
-	err = tr.SendTransactions(context.Background(), &model.TransactionsPayload{})
+	stream := transport.NewStream()
+	go stream.Close()
+
+	err = tr.SendStream(context.Background(), stream)
 	assert.NoError(t, err)
 	assert.Len(t, h.requests, 1)
 }
@@ -49,7 +51,10 @@ func TestInitDefaultDiscard(t *testing.T) {
 	assert.NotNil(t, tr)
 	assert.Exactly(t, tr, transport.Default)
 
-	err = tr.SendTransactions(context.Background(), &model.TransactionsPayload{})
+	stream := transport.NewStream()
+	go stream.Close()
+
+	err = tr.SendStream(context.Background(), stream)
 	assert.NoError(t, err)
 	assert.Len(t, h.requests, 1)
 }
@@ -62,6 +67,9 @@ func TestInitDefaultError(t *testing.T) {
 	assert.NotNil(t, tr)
 	assert.Exactly(t, tr, transport.Default)
 
-	sendErr := tr.SendTransactions(context.Background(), &model.TransactionsPayload{})
+	stream := transport.NewStream()
+	go stream.Close()
+
+	sendErr := tr.SendStream(context.Background(), stream)
 	assert.Exactly(t, initErr, sendErr)
 }

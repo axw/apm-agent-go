@@ -53,7 +53,7 @@ func newSender(t *Tracer, cfg *tracerConfig, stats *TracerStats) *sender {
 				return
 			case <-s.sendStream:
 			}
-			s.sentStream <- s.tracer.StreamSender.SendStream(ctx, s.stream)
+			s.sentStream <- s.tracer.Transport.SendStream(ctx, s.stream)
 		}
 	}()
 	return s

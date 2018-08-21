@@ -156,8 +156,8 @@ func (opts *options) init(continueOnError bool) error {
 // The exported fields be altered or replaced any time up until
 // any Tracer methods have been invoked.
 type Tracer struct {
-	StreamSender transport.StreamSender
-	Service      struct {
+	Transport transport.Transport
+	Service   struct {
 		Name        string
 		Version     string
 		Environment string
@@ -220,7 +220,7 @@ func NewTracer(serviceName, serviceVersion string) (*Tracer, error) {
 
 func newTracer(opts options) *Tracer {
 	t := &Tracer{
-		StreamSender:          transport.Default,
+		Transport:             transport.Default,
 		process:               &currentProcess,
 		system:                &localSystem,
 		closing:               make(chan struct{}),

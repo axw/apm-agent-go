@@ -2,7 +2,7 @@ package transport_test
 
 import (
 	"bytes"
-	"compress/flate"
+	"compress/zlib"
 	"encoding/json"
 	"io"
 	"io/ioutil"
@@ -50,8 +50,9 @@ func TestStreamWriteRead(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	flateReader := flate.NewReader(s)
-	n, err := io.Copy(&buf, flateReader)
+	zlibReader, err := zlib.NewReader(s)
+	assert.NoError(t, err)
+	n, err := io.Copy(&buf, zlibReader)
 	assert.NoError(t, err)
 	assert.NotZero(t, n)
 
@@ -75,16 +76,25 @@ func TestStreamWriteBuffers(t *testing.T) {
 	var tx model.Transaction
 	s := transport.NewStream()
 
+	headerReader, headerWriter := io.Pipe()
+	go func() {
+		var header [2]byte
+		s.Read(header[:])
+		headerWriter.Write(header[:])
+		headerWriter.Close()
+	}()
+
 	assert.NoError(t, s.WriteTransaction(tx))
-	assert.Zero(t, s.Flushed()) // not flushed yet
+	assert.Equal(t, int64(2), s.Flushed()) // header gets written synchronously
 	closed := make(chan error)
 	go func() {
 		closed <- s.Close()
 	}()
 
 	var buf bytes.Buffer
-	flateReader := flate.NewReader(s)
-	n, err := io.Copy(&buf, flateReader)
+	zlibReader, err := zlib.NewReader(io.MultiReader(headerReader, s))
+	assert.NoError(t, err)
+	n, err := io.Copy(&buf, zlibReader)
 	assert.NoError(t, err)
 	assert.NotZero(t, n)
 	assert.NoError(t, <-closed)
@@ -109,7 +119,7 @@ func TestStreamWriteFlushesAutomatically(t *testing.T) {
 	transactionsWritten := make(chan int)
 	go func() {
 		var n int
-		for s.Flushed() == 0 {
+		for s.Flushed() <= 2 {
 			assert.NoError(t, s.WriteTransaction(tx))
 			n++
 		}
@@ -117,8 +127,9 @@ func TestStreamWriteFlushesAutomatically(t *testing.T) {
 		transactionsWritten <- n
 	}()
 
-	flateReader := flate.NewReader(s)
-	d := json.NewDecoder(flateReader)
+	zlibReader, err := zlib.NewReader(s)
+	assert.NoError(t, err)
+	d := json.NewDecoder(zlibReader)
 	d.DisallowUnknownFields()
 
 	var transactionPayload struct {

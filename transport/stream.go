@@ -4,8 +4,11 @@ import (
 	"compress/zlib"
 	"io"
 	"io/ioutil"
+	"log"
 
+	"github.com/elastic/apm-agent-go/internal/apmdebug"
 	"github.com/elastic/apm-agent-go/internal/fastjson"
+	"github.com/elastic/apm-agent-go/internal/pretty"
 	"github.com/elastic/apm-agent-go/model"
 )
 
@@ -76,11 +79,17 @@ func (s *Stream) Close() error {
 	return s.pipeWriter.Close()
 }
 
-// TODO(axw) should the methods take context? Or should we provide a
-// method for closing the read side?
-
 // WriteMetadata writes the system, process, and service metadata to the stream.
-func (s *Stream) WriteMetadata(system model.System, process model.Process, service model.Service) error {
+func (s *Stream) WriteMetadata(system model.System, process model.Process, service model.Service) (err error) {
+	if apmdebug.TraceTransport {
+		log.Printf(
+			"WriteMetadata(%# v, %# v, %# v)",
+			pretty.Formatter(system),
+			pretty.Formatter(process),
+			pretty.Formatter(service),
+		)
+		defer func() { log.Printf("(returned %# v)", err) }()
+	}
 	s.jsonWriter.RawString(`{"metadata":{`)
 	s.jsonWriter.RawString(`"system":`)
 	system.MarshalFastJSON(&s.jsonWriter)
@@ -93,7 +102,11 @@ func (s *Stream) WriteMetadata(system model.System, process model.Process, servi
 }
 
 // WriteTransaction writes tx to the stream.
-func (s *Stream) WriteTransaction(tx model.Transaction) error {
+func (s *Stream) WriteTransaction(tx model.Transaction) (err error) {
+	if apmdebug.TraceTransport {
+		log.Printf("WriteTransaction(%# v)", pretty.Formatter(tx))
+		defer func() { log.Printf("(returned %# v)", err) }()
+	}
 	s.jsonWriter.RawString(`{"transaction":`)
 	tx.MarshalFastJSON(&s.jsonWriter)
 	s.jsonWriter.RawByte('}')
@@ -101,7 +114,11 @@ func (s *Stream) WriteTransaction(tx model.Transaction) error {
 }
 
 // WriteError writes e to the stream.
-func (s *Stream) WriteError(e model.Error) error {
+func (s *Stream) WriteError(e model.Error) (err error) {
+	if apmdebug.TraceTransport {
+		log.Printf("WriteError(%# v)", pretty.Formatter(e))
+		defer func() { log.Printf("(returned %# v)", err) }()
+	}
 	s.jsonWriter.RawString(`{"error":`)
 	e.MarshalFastJSON(&s.jsonWriter)
 	s.jsonWriter.RawByte('}')
@@ -109,7 +126,11 @@ func (s *Stream) WriteError(e model.Error) error {
 }
 
 // WriteMetrics writes m to the stream.
-func (s *Stream) WriteMetrics(m model.Metrics) error {
+func (s *Stream) WriteMetrics(m model.Metrics) (err error) {
+	if apmdebug.TraceTransport {
+		log.Printf("WriteMetrics(%# v)", pretty.Formatter(m))
+		defer func() { log.Printf("(returned %# v)", err) }()
+	}
 	s.jsonWriter.RawString(`{"metrics":`)
 	m.MarshalFastJSON(&s.jsonWriter)
 	s.jsonWriter.RawByte('}')
