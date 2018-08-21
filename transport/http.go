@@ -93,6 +93,8 @@ func NewHTTPTransport(serverURL, secretToken string) (*HTTPTransport, error) {
 		}
 	}
 
+	// TODO(axw) need to redefine meaning of the timeout
+	// for streaming. Should be an idle timeout?
 	timeout, err := apmconfig.ParseDurationEnv(envServerTimeout, "s", defaultServerTimeout)
 	if err != nil {
 		return nil, err

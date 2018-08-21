@@ -79,7 +79,20 @@ func (s *Stream) Close() error {
 // TODO(axw) should the methods take context? Or should we provide a
 // method for closing the read side?
 
-// WriteTransaction writes tx to the stream, returning the number of bytes written.
+// WriteMetadata writes the system, process, and service metadata to the stream.
+func (s *Stream) WriteMetadata(system model.System, process model.Process, service model.Service) error {
+	s.jsonWriter.RawString(`{"metadata":{`)
+	s.jsonWriter.RawString(`"system":`)
+	system.MarshalFastJSON(&s.jsonWriter)
+	s.jsonWriter.RawString(`,"process":`)
+	process.MarshalFastJSON(&s.jsonWriter)
+	s.jsonWriter.RawString(`,"service":`)
+	service.MarshalFastJSON(&s.jsonWriter)
+	s.jsonWriter.RawString(`}}`)
+	return s.write()
+}
+
+// WriteTransaction writes tx to the stream.
 func (s *Stream) WriteTransaction(tx model.Transaction) error {
 	s.jsonWriter.RawString(`{"transaction":`)
 	tx.MarshalFastJSON(&s.jsonWriter)
@@ -87,7 +100,7 @@ func (s *Stream) WriteTransaction(tx model.Transaction) error {
 	return s.write()
 }
 
-// WriteError writes e to the stream, returning the number of bytes written.
+// WriteError writes e to the stream.
 func (s *Stream) WriteError(e model.Error) error {
 	s.jsonWriter.RawString(`{"error":`)
 	e.MarshalFastJSON(&s.jsonWriter)
@@ -95,7 +108,7 @@ func (s *Stream) WriteError(e model.Error) error {
 	return s.write()
 }
 
-// WriteMetrics writes m to the stream, returning the number of bytes written.
+// WriteMetrics writes m to the stream.
 func (s *Stream) WriteMetrics(m model.Metrics) error {
 	s.jsonWriter.RawString(`{"metrics":`)
 	m.MarshalFastJSON(&s.jsonWriter)
@@ -104,6 +117,7 @@ func (s *Stream) WriteMetrics(m model.Metrics) error {
 }
 
 func (s *Stream) write() error {
+	s.jsonWriter.RawByte('\n')
 	if _, err := s.zlibWriter.Write(s.jsonWriter.Bytes()); err != nil {
 		return err
 	}

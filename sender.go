@@ -64,20 +64,20 @@ func (s *sender) maybeStartStream() {
 		return
 	}
 	s.stream.Reset()
-	s.flushTimer.Reset(s.cfg.flushInterval)
-	s.streamOpen = true
-	s.sendingStream = true
-
-	// TODO(axw) write metadata to stream
-	/*
-		service := makeService(s.tracer.Service.Name, s.tracer.Service.Version, s.tracer.Service.Environment)
-		s.tracer.process,
-		s.tracer.system,
-	*/
 
 	// TODO(axw) introduce "grace period" which
-	// delays sending stream after an error.
+	// delays sending the stream after errors.
+
 	s.sendStream <- struct{}{}
+	s.streamOpen = true
+	s.sendingStream = true
+	s.flushTimer.Reset(s.cfg.flushInterval)
+
+	s.stream.WriteMetadata(
+		*s.tracer.system,
+		*s.tracer.process,
+		makeService(s.tracer.Service.Name, s.tracer.Service.Version, s.tracer.Service.Environment),
+	)
 }
 
 func (s *sender) maybeCloseStream() {
