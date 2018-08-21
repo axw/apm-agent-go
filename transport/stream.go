@@ -1,7 +1,7 @@
 package transport
 
 import (
-	"compress/flate"
+	"compress/zlib"
 	"io"
 	"io/ioutil"
 
@@ -9,12 +9,12 @@ import (
 	"github.com/elastic/apm-agent-go/model"
 )
 
-// Stream is an io.Reader that returns JSON-encoded and DEFLATE-compressed
+// Stream is an io.Reader that returns JSON-encoded and zlib-compressed
 // model entities (transactions, spans, etc.). Reads on a stream will block
 // until entities are written to it, or the stream is closed.
 //
-// Writes to the stream may be buffered due to DEFLATE compression. When
-// the flate buffer is full, or the stream is explicitly flushed, then
+// Writes to the stream may be buffered due to zlib compression. When
+// the zlib buffer is full, or the stream is explicitly flushed, then
 // the compressed data will be flushed to the writer, which will block
 // until the stream is read.
 //
@@ -27,12 +27,12 @@ type Stream struct {
 	pipeReader     *io.PipeReader
 	pipeWriter     *io.PipeWriter
 	countingWriter countingWriter
-	flateWriter    *flate.Writer
+	zlibWriter     *zlib.Writer
 }
 
-// NewStream is equivalent to NewStreamLevel(flate.DefaultCompression).
+// NewStream is equivalent to NewStreamLevel(zlib.DefaultCompression).
 func NewStream() *Stream {
-	stream, err := NewStreamLevel(flate.DefaultCompression)
+	stream, err := NewStreamLevel(zlib.DefaultCompression)
 	if err != nil {
 		panic(err)
 	}
@@ -41,11 +41,11 @@ func NewStream() *Stream {
 
 // NewStreamLevel returns a new Stream with the given compression level.
 func NewStreamLevel(compressionLevel int) (*Stream, error) {
-	flateWriter, err := flate.NewWriter(ioutil.Discard, compressionLevel)
+	zlibWriter, err := zlib.NewWriterLevel(ioutil.Discard, compressionLevel)
 	if err != nil {
 		return nil, err
 	}
-	s := Stream{flateWriter: flateWriter}
+	s := Stream{zlibWriter: zlibWriter}
 	s.Reset()
 	return &s, nil
 }
@@ -54,10 +54,10 @@ func NewStreamLevel(compressionLevel int) (*Stream, error) {
 func (s *Stream) Reset() {
 	s.countingWriter = countingWriter{}
 	s.pipeReader, s.pipeWriter = io.Pipe()
-	s.flateWriter.Reset(io.MultiWriter(s.pipeWriter, &s.countingWriter))
+	s.zlibWriter.Reset(io.MultiWriter(s.pipeWriter, &s.countingWriter))
 }
 
-// Read reads the flate-compressed, JSON-encoded model entities written to the stream.
+// Read reads the zlib-compressed, JSON-encoded model entities written to the stream.
 func (s *Stream) Read(buf []byte) (int, error) {
 	return s.pipeReader.Read(buf)
 }
@@ -70,7 +70,7 @@ func (s *Stream) Flushed() int64 {
 // Close flushes any buffered data and closes the stream such that
 // subsequent reads will return io.EOF.
 func (s *Stream) Close() error {
-	if err := s.flateWriter.Close(); err != nil {
+	if err := s.zlibWriter.Close(); err != nil {
 		return err
 	}
 	return s.pipeWriter.Close()
@@ -104,7 +104,7 @@ func (s *Stream) WriteMetrics(m model.Metrics) error {
 }
 
 func (s *Stream) write() error {
-	if _, err := s.flateWriter.Write(s.jsonWriter.Bytes()); err != nil {
+	if _, err := s.zlibWriter.Write(s.jsonWriter.Bytes()); err != nil {
 		return err
 	}
 	s.jsonWriter.Reset()

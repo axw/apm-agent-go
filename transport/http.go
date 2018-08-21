@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	intakePath = "/v2/ntake"
+	intakePath = "/v2/intake"
 
 	envSecretToken      = "ELASTIC_APM_SECRET_TOKEN"
 	envServerURL        = "ELASTIC_APM_SERVER_URL"
