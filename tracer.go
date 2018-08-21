@@ -19,12 +19,6 @@ const (
 	defaultPostContext     = 3
 	transactionsChannelCap = 1000
 	errorsChannelCap       = 1000
-
-	// defaultMaxErrorQueueSize is the default maximum number
-	// of errors to enqueue in the tracer. When this fills up,
-	// errors will start being dropped (when the channel is
-	// also full).
-	defaultMaxErrorQueueSize = 1000
 )
 
 var (
@@ -162,8 +156,8 @@ func (opts *options) init(continueOnError bool) error {
 // The exported fields be altered or replaced any time up until
 // any Tracer methods have been invoked.
 type Tracer struct {
-	Transport transport.Transport
-	Service   struct {
+	StreamSender transport.StreamSender
+	Service      struct {
 		Name        string
 		Version     string
 		Environment string
@@ -226,7 +220,7 @@ func NewTracer(serviceName, serviceVersion string) (*Tracer, error) {
 
 func newTracer(opts options) *Tracer {
 	t := &Tracer{
-		Transport:             transport.Default,
+		StreamSender:          transport.Default,
 		process:               &currentProcess,
 		system:                &localSystem,
 		closing:               make(chan struct{}),
@@ -257,7 +251,6 @@ func newTracer(opts options) *Tracer {
 		cfg.metricsInterval = opts.metricsInterval
 		cfg.flushInterval = opts.flushInterval
 		cfg.maxTransactionQueueSize = opts.maxTransactionQueueSize
-		cfg.maxErrorQueueSize = defaultMaxErrorQueueSize
 		cfg.sanitizedFieldNames = opts.sanitizedFieldNames
 		cfg.preContext = defaultPreContext
 		cfg.postContext = defaultPostContext
@@ -321,15 +314,6 @@ func (t *Tracer) SetMetricsInterval(d time.Duration) {
 func (t *Tracer) SetMaxTransactionQueueSize(n int) {
 	t.sendConfigCommand(func(cfg *tracerConfig) {
 		cfg.maxTransactionQueueSize = n
-	})
-}
-
-// SetMaxErrorQueueSize sets the maximum error queue size -- the
-// maximum number of errors to buffer before they will start getting
-// dropped. If set to a non-positive value, the queue size is unlimited.
-func (t *Tracer) SetMaxErrorQueueSize(n int) {
-	t.sendConfigCommand(func(cfg *tracerConfig) {
-		cfg.maxErrorQueueSize = n
 	})
 }
 
@@ -475,22 +459,13 @@ func (t *Tracer) loop() {
 	}()
 
 	var cfg tracerConfig
-	var flushed chan<- struct{}
+	var forceFlushed chan<- struct{}
 	var forceSentMetrics chan<- struct{}
 	var sendMetricsC <-chan time.Time
 	var gatheringMetrics bool
-	var flushC <-chan time.Time
 	var transactions []*Transaction
-	var errors []*Error
 	var statsUpdates TracerStats
-	sender := sender{
-		tracer: t,
-		cfg:    &cfg,
-		stats:  &statsUpdates,
-	}
 
-	errorsC := t.errors
-	forceFlush := t.forceFlush
 	forceSendMetrics := t.forceSendMetrics
 	gatheredMetrics := make(chan struct{}, 1)
 	flushTimer := time.NewTimer(0)
@@ -519,82 +494,102 @@ func (t *Tracer) loop() {
 		timer.Reset(interval)
 		*ch = timer.C
 	}
-	startFlushTimer := func() {
-		startTimer(&flushC, flushTimer, cfg.flushInterval)
-	}
 	startMetricsTimer := func() {
 		startTimer(&sendMetricsC, metricsTimer, cfg.metricsInterval)
 	}
-
-	receivedTransaction := func(tx *Transaction, stats *TracerStats) {
+	enqueueTransaction := func(tx *Transaction) {
 		if cfg.maxTransactionQueueSize > 0 && len(transactions) >= cfg.maxTransactionQueueSize {
-			// The queue is full, so pop the oldest item.
-			// TODO(axw) use container/ring? implement
-			// ring buffer on top of slice? profile
+			// The queue is full, pop off the older transactions
+			// to make room for the new one. It's possible that
+			// the max transaction queue size has changed.
 			n := uint64(len(transactions) - cfg.maxTransactionQueueSize + 1)
 			for _, tx := range transactions[:n] {
 				tx.reset()
 				t.transactionPool.Put(tx)
 			}
-			transactions = transactions[n:]
-			stats.TransactionsDropped += n
+			copy(transactions, transactions[n:])
+			transactions = transactions[:cfg.maxTransactionQueueSize-1]
+			statsUpdates.TransactionsDropped += n
 		}
 		transactions = append(transactions, tx)
 	}
 
+	sender := newSender(t, &cfg, &statsUpdates)
+	sendError := func(e *Error) {
+		sender.sendError(e)
+		e.reset()
+		t.errorPool.Put(e)
+	}
+	sendTransaction := func(tx *Transaction) {
+		sender.sendTransaction(tx)
+		tx.reset()
+		t.transactionPool.Put(tx)
+	}
+
 	for {
+		var closeStream bool
 		var gatherMetrics bool
 		var sendMetrics bool
-		var sendTransactions bool
 		statsUpdates = TracerStats{}
+
+		errorsC := t.errors
+		forceFlush := t.forceFlush
+		flushTimerC := sender.flushTimer.C
+		if sender.sendingStream && !sender.streamOpen {
+			// While we're flushing, we discard new errors
+			// in favour of older ones, under the assumption
+			// that newer errors are more likely to be due
+			// to cascading failure.
+			errorsC = nil
+			forceFlush = nil
+			flushTimerC = nil
+		}
 
 		select {
 		case <-t.closing:
 			return
+
 		case cmd := <-t.configCommands:
 			cmd(&cfg)
-			if cfg.maxErrorQueueSize <= 0 || len(errors) < cfg.maxErrorQueueSize {
-				errorsC = t.errors
-			}
 			startMetricsTimer()
 			continue
+
+		case err := <-sender.sentStream:
+			if err != nil && cfg.logger != nil {
+				// TODO(axw) set/extend grace period deadline
+				cfg.logger.Debugf("failed to send stream: %s", err)
+			}
+			sender.sendingStream = false
+			if forceFlushed != nil {
+				forceFlushed <- struct{}{}
+				forceFlushed = nil
+			}
+
 		case e := <-errorsC:
-			errors = append(errors, e)
+			sendError(e)
+
 		case tx := <-t.transactions:
-			beforeLen := len(transactions)
-			receivedTransaction(tx, &statsUpdates)
-			if len(transactions) == beforeLen && flushC != nil {
-				// The queue was already full, and a retry
-				// timer is running; wait for it to fire.
-				t.statsMu.Lock()
-				t.stats.accumulate(statsUpdates)
-				t.statsMu.Unlock()
+			if sender.sendingStream && !sender.streamOpen {
+				// While we're flushing we still accept
+				// transactions, enqueuing them for when
+				// we can start a new request.
+				enqueueTransaction(tx)
 				continue
 			}
-			if cfg.maxTransactionQueueSize <= 0 || len(transactions) < cfg.maxTransactionQueueSize {
-				startFlushTimer()
-				continue
-			}
-			sendTransactions = true
-		case <-flushC:
-			flushC = nil
-			sendTransactions = true
-		case flushed = <-forceFlush:
-			// The caller has explicitly requested a flush, so
-			// drain any transactions buffered in the channel.
-			for n := len(t.transactions); n > 0; n-- {
-				tx := <-t.transactions
-				receivedTransaction(tx, &statsUpdates)
-			}
-			// flushed will be signaled, and forceFlush set back to
-			// t.forceFlush, when the queued transactions and/or
-			// errors are successfully sent.
-			forceFlush = nil
-			flushC = nil
-			sendTransactions = true
+			sendTransaction(tx)
+
+		case <-flushTimerC:
+			closeStream = true
+
+		case forceFlushed = <-forceFlush:
+			// forceFlushed will be signaled when the current request
+			// is successfully sent.
+			closeStream = true
+
 		case <-sendMetricsC:
 			sendMetricsC = nil
 			gatherMetrics = !gatheringMetrics
+
 		case forceSentMetrics = <-forceSendMetrics:
 			// forceSentMetrics will be signaled, and forceSendMetrics
 			// set back to t.forceSendMetrics, when metrics have been
@@ -602,48 +597,42 @@ func (t *Tracer) loop() {
 			forceSendMetrics = nil
 			sendMetricsC = nil
 			gatherMetrics = !gatheringMetrics
+
 		case <-gatheredMetrics:
 			gatheringMetrics = false
 			sendMetrics = true
 		}
 
-		if remainder := cfg.maxErrorQueueSize - len(errors); remainder > 0 {
-			// Drain any errors in the channel, up to the maximum queue size.
-			for n := len(t.errors); n > 0 && remainder > 0; n-- {
-				errors = append(errors, <-t.errors)
-				remainder--
-			}
-		}
-		if sender.sendErrors(ctx, errors) {
-			for _, e := range errors {
-				e.reset()
-				t.errorPool.Put(e)
-			}
-			errors = errors[:0]
-			errorsC = t.errors
-		} else if len(errors) == cfg.maxErrorQueueSize {
-			errorsC = nil
-		}
-		if sendTransactions {
-			if sender.sendTransactions(ctx, transactions) {
-				for _, tx := range transactions {
-					tx.reset()
-					t.transactionPool.Put(tx)
+		if sender.streamOpen {
+			// Send enqueued and buffered transactions.
+			for i, tx := range transactions {
+				if !sender.streamOpen {
+					copy(transactions, transactions[i:])
+					transactions = transactions[:len(transactions)-i]
+					break
 				}
-				transactions = transactions[:0]
+				sendTransaction(tx)
+			}
+			for n := len(t.transactions); n > 0 && sender.streamOpen; n-- {
+				sendTransaction(<-t.transactions)
 			}
 		}
+		if closeStream && sender.streamOpen {
+			sender.closeStream()
+		}
+
 		if !statsUpdates.isZero() {
 			t.statsMu.Lock()
 			t.stats.accumulate(statsUpdates)
 			t.statsMu.Unlock()
 		}
+
 		if gatherMetrics {
 			gatheringMetrics = true
 			sender.gatherMetrics(ctx, gatheredMetrics)
 		}
 		if sendMetrics {
-			sender.sendMetrics(ctx)
+			sender.sendMetrics()
 			// We don't retry sending metrics on failure;
 			// inform the caller that an attempt was made
 			// regardless of the outcome, and restart the
@@ -655,17 +644,6 @@ func (t *Tracer) loop() {
 			}
 			startMetricsTimer()
 		}
-
-		if statsUpdates.Errors.SendTransactions != 0 || statsUpdates.Errors.SendErrors != 0 {
-			// Sending transactions or errors failed, start a new timer to resend.
-			startFlushTimer()
-			continue
-		}
-		if sendTransactions && flushed != nil {
-			forceFlush = t.forceFlush
-			flushed <- struct{}{}
-			flushed = nil
-		}
 	}
 }
 
@@ -675,7 +653,6 @@ type tracerConfig struct {
 	flushInterval           time.Duration
 	metricsInterval         time.Duration
 	maxTransactionQueueSize int
-	maxErrorQueueSize       int
 	logger                  Logger
 	metricsGatherers        []MetricsGatherer
 	contextSetter           stacktrace.ContextSetter

@@ -7,6 +7,7 @@ import (
 
 	"github.com/elastic/apm-agent-go/model"
 	"github.com/elastic/apm-agent-go/stacktrace"
+	"github.com/elastic/apm-agent-go/transport"
 )
 
 // notSampled is used as the pointee for the model.Transaction.Sampled field
@@ -14,92 +15,148 @@ import (
 var notSampled = false
 
 type sender struct {
-	tracer  *Tracer
-	cfg     *tracerConfig
-	stats   *TracerStats
-	metrics Metrics
+	tracer        *Tracer
+	cfg           *tracerConfig
+	stats         *TracerStats
+	stream        *transport.Stream
+	flushTimer    *time.Timer
+	sendStream    chan struct{}
+	sentStream    chan error
+	streamOpen    bool
+	sendingStream bool
+	metrics       Metrics
 
-	modelTransactions []model.Transaction
-	modelSpans        []model.Span
-	modelStacktrace   []model.StacktraceFrame
+	modelSpans      []model.Span
+	modelStacktrace []model.StacktraceFrame
 }
 
-// sendTransactions attempts to send enqueued transactions to the APM server,
-// returning true if the transactions were successfully sent.
-func (s *sender) sendTransactions(ctx context.Context, transactions []*Transaction) bool {
-	if len(transactions) == 0 {
-		return false
+func newSender(t *Tracer, cfg *tracerConfig, stats *TracerStats) *sender {
+	s := &sender{
+		tracer:     t,
+		cfg:        cfg,
+		stats:      stats,
+		flushTimer: time.NewTimer(0),
+		sendStream: make(chan struct{}, 1),
+		sentStream: make(chan error, 1),
+		stream:     transport.NewStream(),
 	}
+	if !s.flushTimer.Stop() {
+		<-s.flushTimer.C
+	}
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		defer s.closeStream()
+		for {
+			select {
+			case <-t.closed:
+				return
+			case <-s.sendStream:
+			}
+			s.sentStream <- s.tracer.StreamSender.SendStream(ctx, s.stream)
+		}
+	}()
+	return s
+}
 
-	s.modelTransactions = s.modelTransactions[:0]
+func (s *sender) maybeStartStream() {
+	if s.streamOpen {
+		return
+	}
+	s.stream.Reset()
+	s.flushTimer.Reset(s.cfg.flushInterval)
+	s.streamOpen = true
+	s.sendingStream = true
+
+	// TODO(axw) write metadata to stream
+	/*
+		service := makeService(s.tracer.Service.Name, s.tracer.Service.Version, s.tracer.Service.Environment)
+		s.tracer.process,
+		s.tracer.system,
+	*/
+
+	// TODO(axw) introduce "grace period" which
+	// delays sending stream after an error.
+	s.sendStream <- struct{}{}
+}
+
+func (s *sender) maybeCloseStream() {
+	if !s.streamOpen {
+		return
+	}
+	// TODO(axw) make the limit configurable
+	const requestSizeLimit = 1024 * 1024
+	if s.stream.Flushed() < requestSizeLimit {
+		return
+	}
+	s.closeStream()
+}
+
+func (s *sender) closeStream() {
+	if err := s.stream.Close(); err != nil {
+		if s.cfg.logger != nil {
+			s.cfg.logger.Debugf("failed to close stream: %s", err)
+		}
+	}
+	s.streamOpen = false
+	if !s.flushTimer.Stop() {
+		select {
+		case <-s.flushTimer.C:
+		default:
+		}
+	}
+}
+
+// sendTransaction attempts to send a transaction to the APM server.
+func (s *sender) sendTransaction(tx *Transaction) {
+	// TODO(axw) need to start sending spans independently.
 	s.modelSpans = s.modelSpans[:0]
 	s.modelStacktrace = s.modelStacktrace[:0]
 
-	for _, tx := range transactions {
-		s.modelTransactions = append(s.modelTransactions, model.Transaction{})
-		modelTx := &s.modelTransactions[len(s.modelTransactions)-1]
-		s.buildModelTransaction(modelTx, tx)
-	}
-
-	service := makeService(s.tracer.Service.Name, s.tracer.Service.Version, s.tracer.Service.Environment)
-	payload := model.TransactionsPayload{
-		Service:      &service,
-		Process:      s.tracer.process,
-		System:       s.tracer.system,
-		Transactions: s.modelTransactions,
-	}
-
-	if err := s.tracer.Transport.SendTransactions(ctx, &payload); err != nil {
+	var modelTx model.Transaction
+	s.buildModelTransaction(&modelTx, tx)
+	s.maybeStartStream()
+	if err := s.stream.WriteTransaction(modelTx); err != nil {
 		if s.cfg.logger != nil {
-			s.cfg.logger.Debugf("sending transactions failed: %s", err)
+			s.cfg.logger.Debugf("failed to write transaction: %s", err)
 		}
-		s.stats.Errors.SendTransactions++
-		return false
+		return
 	}
-	s.stats.TransactionsSent += uint64(len(transactions))
-	return true
+	s.stats.TransactionsSent++
+	s.maybeCloseStream()
 }
 
-// sendErrors attempts to send enqueued errors to the APM server,
-// returning true if the errors were successfully sent.
-func (s *sender) sendErrors(ctx context.Context, errors []*Error) bool {
-	if len(errors) == 0 {
-		return false
+// sendError attempts to send an error to the APM server.
+func (s *sender) sendError(e *Error) {
+	s.buildModelError(e)
+	s.maybeStartStream()
+	if err := s.stream.WriteError(e.model); err != nil {
+		if s.cfg.logger != nil {
+			s.cfg.logger.Debugf("failed to write error: %s", err)
+		}
+		return
 	}
-	service := makeService(s.tracer.Service.Name, s.tracer.Service.Version, s.tracer.Service.Environment)
-	payload := model.ErrorsPayload{
-		Service: &service,
-		Process: s.tracer.process,
-		System:  s.tracer.system,
-		Errors:  make([]*model.Error, len(errors)),
+	s.stats.ErrorsSent++
+	s.maybeCloseStream()
+}
+
+// sendMetrics attempts to send metrics to the APM server. This must be
+// called after gatherMetrics has signalled that metrics have all been
+// gathered.
+func (s *sender) sendMetrics() {
+	if len(s.metrics.metrics) == 0 {
+		return
 	}
-	for i, e := range errors {
-		if e.Transaction != nil {
-			if !e.Transaction.traceContext.Span.isZero() {
-				e.model.TraceID = model.TraceID(e.Transaction.traceContext.Trace)
-				e.model.ParentID = model.SpanID(e.Transaction.traceContext.Span)
-			} else {
-				e.model.Transaction.ID = model.UUID(e.Transaction.traceContext.Trace)
+	s.maybeStartStream()
+	for _, metrics := range s.metrics.metrics {
+		if err := s.stream.WriteMetrics(*metrics); err != nil {
+			if s.cfg.logger != nil {
+				s.cfg.logger.Debugf("failed to send metrics: %s", err)
 			}
 		}
-		s.setStacktraceContext(e.modelStacktrace)
-		e.setStacktrace()
-		e.setCulprit()
-		e.model.ID = model.UUID(e.ID)
-		e.model.Timestamp = model.Time(e.Timestamp.UTC())
-		e.model.Context = e.Context.build()
-		e.model.Exception.Handled = e.Handled
-		payload.Errors[i] = &e.model
 	}
-	if err := s.tracer.Transport.SendErrors(ctx, &payload); err != nil {
-		if s.cfg.logger != nil {
-			s.cfg.logger.Debugf("sending errors failed: %s", err)
-		}
-		s.stats.Errors.SendErrors++
-		return false
-	}
-	s.stats.ErrorsSent += uint64(len(errors))
-	return true
+	s.metrics.reset()
+	s.maybeCloseStream()
 }
 
 // gatherMetrics gathers metrics from each of the registered
@@ -128,28 +185,6 @@ func (s *sender) gatherMetrics(ctx context.Context, gathered chan<- struct{}) {
 		}
 		gathered <- struct{}{}
 	}()
-}
-
-// sendMetrics attempts to send metrics to the APM server. This must be
-// called after gatherMetrics has signalled that metrics have all been
-// gathered.
-func (s *sender) sendMetrics(ctx context.Context) {
-	if len(s.metrics.metrics) == 0 {
-		return
-	}
-	service := makeService(s.tracer.Service.Name, s.tracer.Service.Version, s.tracer.Service.Environment)
-	payload := model.MetricsPayload{
-		Service: &service,
-		Process: s.tracer.process,
-		System:  s.tracer.system,
-		Metrics: s.metrics.metrics,
-	}
-	if err := s.tracer.Transport.SendMetrics(ctx, &payload); err != nil {
-		if s.cfg.logger != nil {
-			s.cfg.logger.Debugf("sending metrics failed: %s", err)
-		}
-	}
-	s.metrics.reset()
 }
 
 func (s *sender) buildModelTransaction(out *model.Transaction, tx *Transaction) {
@@ -203,6 +238,25 @@ func (s *sender) buildModelSpan(out *model.Span, span *Span) {
 	s.modelStacktrace = appendModelStacktraceFrames(s.modelStacktrace, span.stacktrace)
 	out.Stacktrace = s.modelStacktrace[stacktraceOffset:]
 	s.setStacktraceContext(out.Stacktrace)
+}
+
+func (s *sender) buildModelError(e *Error) {
+	// TODO(axw) move the model type outside of Error
+	if e.Transaction != nil {
+		if !e.Transaction.traceContext.Span.isZero() {
+			e.model.TraceID = model.TraceID(e.Transaction.traceContext.Trace)
+			e.model.ParentID = model.SpanID(e.Transaction.traceContext.Span)
+		} else {
+			e.model.Transaction.ID = model.UUID(e.Transaction.traceContext.Trace)
+		}
+	}
+	s.setStacktraceContext(e.modelStacktrace)
+	e.setStacktrace()
+	e.setCulprit()
+	e.model.ID = model.UUID(e.ID)
+	e.model.Timestamp = model.Time(e.Timestamp.UTC())
+	e.model.Context = e.Context.build()
+	e.model.Exception.Handled = e.Handled
 }
 
 func (s *sender) setStacktraceContext(stack []model.StacktraceFrame) {
