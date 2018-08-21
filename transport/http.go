@@ -44,9 +44,9 @@ type HTTPTransport struct {
 	headers   http.Header
 }
 
-// NewHTTPTransport returns a new HTTPTransport, which can be used for sending
-// transactions and errors to the APM server at the specified URL, with the
-// given secret token.
+// NewHTTPTransport returns a new HTTPTransport, which can be used for
+// streaming data to the APM server at the specified URL, with the given
+// secret token.
 //
 // If the URL specified is the empty string, then NewHTTPTransport will use the
 // value of the ELASTIC_APM_SERVER_URL environment variable, if defined; if
@@ -104,7 +104,7 @@ func NewHTTPTransport(serverURL, secretToken string) (*HTTPTransport, error) {
 	}
 
 	headers := make(http.Header)
-	headers.Set("Content-Type", "application/json")
+	headers.Set("Content-Type", "application/x-ndjson")
 	headers.Set("Content-Encoding", "deflate")
 	if secretToken == "" {
 		secretToken = os.Getenv(envSecretToken)
