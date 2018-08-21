@@ -603,22 +603,33 @@ func (t *Tracer) loop() {
 			sendMetrics = true
 		}
 
-		if sender.streamOpen {
-			// Send enqueued and buffered transactions.
+		// Send as many enqueued/buffered transactions and errors as
+		// possible before closing the stream.
+		if sender.streamOpen || !sender.sendingStream {
 			for i, tx := range transactions {
-				if !sender.streamOpen {
+				if sender.sendingStream && !sender.streamOpen {
 					copy(transactions, transactions[i:])
 					transactions = transactions[:len(transactions)-i]
 					break
 				}
 				sendTransaction(tx)
 			}
-			for n := len(t.transactions); n > 0 && sender.streamOpen; n-- {
+			for n := len(t.transactions); n > 0 && (sender.streamOpen || !sender.sendingStream); n-- {
 				sendTransaction(<-t.transactions)
+			}
+			for n := len(t.errors); n > 0 && (sender.streamOpen || !sender.sendingStream); n-- {
+				sendError(<-t.errors)
 			}
 		}
 		if closeStream && sender.streamOpen {
 			sender.closeStream()
+		}
+		if forceFlushed != nil && !sender.sendingStream {
+			// t.Flush was called, but there was no data being
+			// sent, or enqueued for sending. We can wake up
+			// the flusher immediately.
+			forceFlushed <- struct{}{}
+			forceFlushed = nil
 		}
 
 		if !statsUpdates.isZero() {

@@ -1,7 +1,6 @@
 package elasticapm_test
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -122,7 +121,7 @@ func testTracerSanitizeFieldNamesEnv(t *testing.T, envValue, expect string) {
 	h.ServeHTTP(w, req)
 	tracer.Flush(nil)
 
-	tx := transport.Payloads()[0].Transactions()[0]
+	tx := transport.Payloads().Transactions[0]
 	assert.Equal(t, tx.Context.Request.Cookies, model.Cookies{
 		{Name: "secret", Value: expect},
 	})
@@ -150,23 +149,15 @@ func testTracerServiceNameSanitization(t *testing.T, sanitizedServiceName string
 		return
 	}
 
-	tracer, err := elasticapm.NewTracer("", "")
-	require.NoError(t, err)
+	tracer, transport := transporttest.NewRecorderTracer()
 	defer tracer.Close()
-
-	var called bool
-	tracer.Transport = transporttest.CallbackTransport{
-		Transactions: func(_ context.Context, payload *model.TransactionsPayload) error {
-			assert.Equal(t, sanitizedServiceName, payload.Service.Name)
-			called = true
-			return nil
-		},
-	}
 
 	tx := tracer.StartTransaction("name", "type")
 	tx.End()
 	tracer.Flush(nil)
-	assert.True(t, called)
+
+	_, _, service := transport.Metadata()
+	assert.Equal(t, sanitizedServiceName, service.Name)
 }
 
 func TestTracerCaptureBodyEnv(t *testing.T) {
@@ -211,7 +202,7 @@ func testTracerCaptureBodyEnv(t *testing.T, envValue string, expectBody bool) {
 	tx.End()
 	tracer.Flush(nil)
 
-	out := transport.Payloads()[0].Transactions()[0]
+	out := transport.Payloads().Transactions[0]
 	if os.Getenv("_EXPECT_BODY") == "1" {
 		assert.NotNil(t, out.Context.Request.Body)
 		assert.Equal(t, "foo_bar", out.Context.Request.Body.Raw)
@@ -237,7 +228,7 @@ func TestTracerSpanFramesMinDurationEnv(t *testing.T) {
 	tx.End()
 	tracer.Flush(nil)
 
-	transaction := transport.Payloads()[0].Transactions()[0]
+	transaction := transport.Payloads().Transactions[0]
 	assert.Len(t, transaction.Spans, 2)
 
 	// Span 0 took only 9ms, so we don't set its stacktrace.
@@ -269,7 +260,7 @@ func TestTracerActive(t *testing.T) {
 	tx.End()
 
 	tracer.Flush(nil)
-	assert.Empty(t, transport.Payloads())
+	assert.Zero(t, transport.Payloads())
 }
 
 func TestTracerActiveInvalid(t *testing.T) {
