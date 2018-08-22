@@ -64,20 +64,26 @@ func (s *sender) maybeStartStream() {
 		return
 	}
 	s.stream.Reset()
+	s.sendStream <- struct{}{}
 
 	// TODO(axw) introduce "grace period" which
 	// delays sending the stream after errors.
 
-	s.sendStream <- struct{}{}
-	s.streamOpen = true
-	s.sendingStream = true
-	s.flushTimer.Reset(s.cfg.flushInterval)
-
-	s.stream.WriteMetadata(
+	err := s.stream.WriteMetadata(
 		*s.tracer.system,
 		*s.tracer.process,
 		makeService(s.tracer.Service.Name, s.tracer.Service.Version, s.tracer.Service.Environment),
 	)
+	if err != nil {
+		if s.cfg.logger != nil {
+			s.cfg.logger.Debugf("failed to write metadata to stream")
+		}
+		return
+	}
+
+	s.streamOpen = true
+	s.sendingStream = true
+	s.flushTimer.Reset(s.cfg.requestDuration)
 }
 
 func (s *sender) maybeCloseStream() {
@@ -120,6 +126,7 @@ func (s *sender) sendTransaction(tx *Transaction) {
 		if s.cfg.logger != nil {
 			s.cfg.logger.Debugf("failed to write transaction: %s", err)
 		}
+		s.stats.Errors.WriteTransaction++
 		return
 	}
 	s.stats.TransactionsSent++
@@ -134,6 +141,7 @@ func (s *sender) sendError(e *Error) {
 		if s.cfg.logger != nil {
 			s.cfg.logger.Debugf("failed to write error: %s", err)
 		}
+		s.stats.Errors.WriteError++
 		return
 	}
 	s.stats.ErrorsSent++
@@ -153,6 +161,7 @@ func (s *sender) sendMetrics() {
 			if s.cfg.logger != nil {
 				s.cfg.logger.Debugf("failed to send metrics: %s", err)
 			}
+			s.stats.Errors.WriteMetrics++
 		}
 	}
 	s.metrics.reset()
@@ -264,8 +273,10 @@ func (s *sender) setStacktraceContext(stack []model.StacktraceFrame) {
 		return
 	}
 	err := stacktrace.SetContext(s.cfg.contextSetter, stack, s.cfg.preContext, s.cfg.postContext)
-	if s.cfg.logger != nil {
-		s.cfg.logger.Debugf("setting context failed: %s", err)
+	if err != nil {
+		if s.cfg.logger != nil {
+			s.cfg.logger.Debugf("setting context failed: %s", err)
+		}
+		s.stats.Errors.SetContext++
 	}
-	s.stats.Errors.SetContext++
 }

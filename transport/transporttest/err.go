@@ -2,6 +2,8 @@ package transporttest
 
 import (
 	"context"
+	"io"
+	"io/ioutil"
 
 	"github.com/elastic/apm-agent-go/transport"
 )
@@ -17,6 +19,11 @@ type ErrorTransport struct {
 }
 
 // SendTransactions discards the stream and returns t.Error.
-func (t ErrorTransport) SendStream(context.Context, *transport.Stream) error {
-	return t.Error
+func (t ErrorTransport) SendStream(_ context.Context, s *transport.Stream) error {
+	if t.Error != nil {
+		s.CloseRead(t.Error)
+		return t.Error
+	}
+	io.Copy(ioutil.Discard, s)
+	return nil
 }

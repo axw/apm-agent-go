@@ -1,6 +1,8 @@
 package elasticapm_test
 
 import (
+	"io"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -42,14 +44,12 @@ func testTracerFlushIntervalEnv(t *testing.T, envValue string, expectedInterval 
 	tracer, err := elasticapm.NewTracer("tracer_testing", "")
 	require.NoError(t, err)
 	defer tracer.Close()
-	tracer.Transport = transporttest.Discard
+	streams := make(chan transporttest.SendStreamRequest)
+	tracer.Transport = &transporttest.ChannelTransport{Streams: streams}
 
 	before := time.Now()
 	tracer.StartTransaction("name", "type").End()
-	assert.Equal(t, elasticapm.TracerStats{TransactionsSent: 0}, tracer.Stats())
-	for tracer.Stats().TransactionsSent == 0 {
-		time.Sleep(10 * time.Millisecond)
-	}
+	io.Copy(ioutil.Discard, (<-streams).Stream) // wait for stream to be closed
 	assert.WithinDuration(t, before.Add(expectedInterval), time.Now(), 100*time.Millisecond)
 }
 

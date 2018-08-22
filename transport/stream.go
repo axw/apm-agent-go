@@ -70,6 +70,10 @@ func (s *Stream) Flushed() int64 {
 	return s.countingWriter.n
 }
 
+func (s *Stream) CloseRead(err error) {
+	s.pipeReader.CloseWithError(err)
+}
+
 // Close flushes any buffered data and closes the stream such that
 // subsequent reads will return io.EOF.
 func (s *Stream) Close() error {

@@ -39,7 +39,7 @@ func init() {
 }
 
 type options struct {
-	flushInterval           time.Duration
+	requestDuration         time.Duration
 	metricsInterval         time.Duration
 	maxTransactionQueueSize int
 	maxSpans                int
@@ -64,9 +64,9 @@ func (opts *options) init(continueOnError bool) error {
 		return true
 	}
 
-	flushInterval, err := initialFlushInterval()
+	requestDuration, err := initialRequestDuration()
 	if failed(err) {
-		flushInterval = defaultFlushInterval
+		requestDuration = defaultAPIRequestTime
 	}
 
 	metricsInterval, err := initialMetricsInterval()
@@ -122,7 +122,7 @@ func (opts *options) init(continueOnError bool) error {
 		log.Printf("[elasticapm]: %s", err)
 	}
 
-	opts.flushInterval = flushInterval
+	opts.requestDuration = requestDuration
 	opts.metricsInterval = metricsInterval
 	opts.maxTransactionQueueSize = maxTransactionQueueSize
 	opts.maxSpans = maxSpans
@@ -249,7 +249,7 @@ func newTracer(opts options) *Tracer {
 	go t.loop()
 	t.configCommands <- func(cfg *tracerConfig) {
 		cfg.metricsInterval = opts.metricsInterval
-		cfg.flushInterval = opts.flushInterval
+		cfg.requestDuration = opts.requestDuration
 		cfg.maxTransactionQueueSize = opts.maxTransactionQueueSize
 		cfg.sanitizedFieldNames = opts.sanitizedFieldNames
 		cfg.preContext = defaultPreContext
@@ -292,11 +292,12 @@ func (t *Tracer) Active() bool {
 	return t.active
 }
 
-// SetFlushInterval sets the flush interval -- the amount of time
-// to wait before flushing enqueued transactions to the APM server.
-func (t *Tracer) SetFlushInterval(d time.Duration) {
+// SetRequestDuration sets the maximum amount of time to keep a request open
+// to the APM server for streaming data before closing the stream and starting
+// a new request.
+func (t *Tracer) SetRequestDuration(d time.Duration) {
 	t.sendConfigCommand(func(cfg *tracerConfig) {
-		cfg.flushInterval = d
+		cfg.requestDuration = d
 	})
 }
 
@@ -661,7 +662,7 @@ func (t *Tracer) loop() {
 // tracerConfig holds the tracer's runtime configuration, which may be modified
 // by sending a tracerConfigCommand to the tracer's configCommands channel.
 type tracerConfig struct {
-	flushInterval           time.Duration
+	requestDuration         time.Duration
 	metricsInterval         time.Duration
 	maxTransactionQueueSize int
 	logger                  Logger

@@ -17,7 +17,6 @@ import (
 )
 
 const (
-	envFlushInterval         = "ELASTIC_APM_FLUSH_INTERVAL"
 	envMetricsInterval       = "ELASTIC_APM_METRICS_INTERVAL"
 	envMaxQueueSize          = "ELASTIC_APM_MAX_QUEUE_SIZE"
 	envMaxSpans              = "ELASTIC_APM_TRANSACTION_MAX_SPANS"
@@ -31,7 +30,11 @@ const (
 	envActive                = "ELASTIC_APM_ACTIVE"
 	envDistributedTracing    = "ELASTIC_APM_DISTRIBUTED_TRACING"
 
-	defaultFlushInterval           = 10 * time.Second
+	// XXX
+	envAPIRequestSize = "ELASTIC_APM_API_REQUEST_SIZE"
+	envAPIRequestTime = "ELASTIC_APM_API_REQUEST_TIME"
+
+	defaultAPIRequestTime          = 10 * time.Second
 	defaultMetricsInterval         = 0 // disabled by default
 	defaultMaxTransactionQueueSize = 500
 	defaultMaxSpans                = 500
@@ -53,8 +56,8 @@ var (
 	}, "|")))
 )
 
-func initialFlushInterval() (time.Duration, error) {
-	return apmconfig.ParseDurationEnv(envFlushInterval, "s", defaultFlushInterval)
+func initialRequestDuration() (time.Duration, error) {
+	return apmconfig.ParseDurationEnv(envAPIRequestTime, "", defaultAPIRequestTime)
 }
 
 func initialMetricsInterval() (time.Duration, error) {
