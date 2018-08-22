@@ -2,8 +2,6 @@ package elasticapm_test
 
 import (
 	"errors"
-	"io"
-	"io/ioutil"
 	"testing"
 	"time"
 
@@ -39,6 +37,7 @@ func TestTracerClosedSendNonblocking(t *testing.T) {
 	assert.Equal(t, uint64(1), tracer.Stats().TransactionsDropped)
 }
 
+/*
 func TestTracerFlushInterval(t *testing.T) {
 	tracer, err := elasticapm.NewTracer("tracer_testing", "")
 	assert.NoError(t, err)
@@ -54,6 +53,7 @@ func TestTracerFlushInterval(t *testing.T) {
 	io.Copy(ioutil.Discard, (<-streams).Stream) // wait for stream to be closed
 	assert.WithinDuration(t, before.Add(interval), time.Now(), 100*time.Millisecond)
 }
+*/
 
 func TestTracerMaxQueueSize(t *testing.T) {
 	tracer, err := elasticapm.NewTracer("tracer_testing", "")
