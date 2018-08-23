@@ -4,14 +4,13 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
-	"fmt"
 	"io"
 	"time"
 
+	"github.com/elastic/apm-agent-go/internal/fastjson"
 	"github.com/elastic/apm-agent-go/internal/iochan"
 	"github.com/elastic/apm-agent-go/model"
 	"github.com/elastic/apm-agent-go/stacktrace"
-	"github.com/elastic/apm-agent-go/transport"
 )
 
 // notSampled is used as the pointee for the model.Transaction.Sampled field
@@ -19,17 +18,13 @@ import (
 var notSampled = false
 
 type sender struct {
-	tracer        *Tracer
-	buffer        *buffer
-	stream        *transport.Stream
-	statsC        chan TracerStats
-	stats         TracerStats
-	cfgC          chan tracerConfig
-	cfg           tracerConfig
-	sendStream    chan struct{}
-	sentStream    chan error
-	sendingStream bool
-	metrics       Metrics
+	tracer  *Tracer
+	buffer  *buffer
+	statsC  chan TracerStats
+	stats   TracerStats
+	cfgC    chan tracerConfig
+	cfg     tracerConfig
+	metrics Metrics
 
 	modelSpans      []model.Span
 	modelStacktrace []model.StacktraceFrame
@@ -37,12 +32,9 @@ type sender struct {
 
 func newSender(t *Tracer) *sender {
 	s := &sender{
-		tracer:     t,
-		statsC:     make(chan TracerStats),
-		cfgC:       make(chan tracerConfig),
-		sendStream: make(chan struct{}, 1),
-		sentStream: make(chan error, 1),
-		stream:     transport.NewStream(),
+		tracer: t,
+		statsC: make(chan TracerStats),
+		cfgC:   make(chan tracerConfig),
 	}
 	go s.loop()
 	return s
@@ -62,6 +54,8 @@ func (s *sender) loop() {
 
 	var req iochan.ReadRequest
 	var requestBuf bytes.Buffer
+	var metadata []byte
+	var gracePeriod time.Duration = -1
 	zlibWriter := zlib.NewWriter(&requestBuf)
 	zlibFlushed := true
 	zlibClosed := false
@@ -100,11 +94,13 @@ func (s *sender) loop() {
 		case req = <-iochanReader.C:
 		case err := <-requestResult:
 			if err != nil {
-				// TODO(axw) set/extend grace period
-				fmt.Println(err)
+				gracePeriod = nextGracePeriod(gracePeriod)
 				if s.cfg.logger != nil {
-					s.cfg.logger.Debugf("request failed: %s", err)
+					s.cfg.logger.Debugf("request failed (next request in %s): %s", err, gracePeriod)
 				}
+			} else {
+				// Reset grace period after success.
+				gracePeriod = -1
 			}
 			flushRequest = false
 			closeRequest = false
@@ -119,11 +115,20 @@ func (s *sender) loop() {
 		// TODO(axw) make the goroutine below long-running, and send
 		// requests to start new requests?
 		if !requestActive && (s.buffer.Len() > 0 || requestBuf.Len() > 0) {
-			// TODO(axw) grace period after failed request.
 			go func() {
-				// TODO(axw) use multireader to write metadata first.
+				if gracePeriod > 0 {
+					select {
+					case <-time.After(gracePeriod):
+					case <-ctx.Done():
+					}
+				}
 				requestResult <- s.tracer.Transport.SendStream(ctx, iochanReader)
 			}()
+			if metadata == nil {
+				metadata = s.requestMetadata()
+			}
+			zlibWriter.Write(metadata)
+			zlibFlushed = false
 			requestActive = true
 			requestTimer.Reset(s.cfg.requestDuration)
 		}
@@ -161,6 +166,22 @@ func (s *sender) loop() {
 			}
 		}
 	}
+}
+
+// requestMetadata returns a JSON-encoded metadata object that features
+// at the head of every request body.
+func (s *sender) requestMetadata() []byte {
+	var json fastjson.Writer
+	service := makeService(s.tracer.Service.Name, s.tracer.Service.Version, s.tracer.Service.Environment)
+	json.RawString(`{"metadata":{`)
+	json.RawString(`"system":`)
+	s.tracer.system.MarshalFastJSON(&json)
+	json.RawString(`,"process":`)
+	s.tracer.process.MarshalFastJSON(&json)
+	json.RawString(`,"service":`)
+	service.MarshalFastJSON(&json)
+	json.RawString(`}}`)
+	return json.Bytes()
 }
 
 func (s *sender) writeTransaction(tx *Transaction) {
