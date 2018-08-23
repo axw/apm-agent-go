@@ -2,8 +2,7 @@ package transporttest
 
 import (
 	"context"
-
-	"github.com/elastic/apm-agent-go/transport"
+	"io"
 )
 
 // ChannelTransport implements transport.Transport,
@@ -19,7 +18,7 @@ type ChannelTransport struct {
 // ChannelTransport.Streams channel when its SendStream
 // method is called.
 type SendStreamRequest struct {
-	Stream *transport.Stream
+	Stream io.Reader
 	Result chan<- error
 }
 
@@ -27,12 +26,12 @@ type SendStreamRequest struct {
 // c.Streams channel with the given payload, and waits for a
 // response on the error channel included in the request, or
 // for the context to be canceled.
-func (c *ChannelTransport) SendStream(ctx context.Context, s *transport.Stream) error {
+func (c *ChannelTransport) SendStream(ctx context.Context, r io.Reader) error {
 	result := make(chan error, 1)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case c.Streams <- SendStreamRequest{s, result}:
+	case c.Streams <- SendStreamRequest{r, result}:
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

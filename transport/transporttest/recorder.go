@@ -12,7 +12,6 @@ import (
 
 	"github.com/elastic/apm-agent-go"
 	"github.com/elastic/apm-agent-go/model"
-	"github.com/elastic/apm-agent-go/transport"
 )
 
 // NewRecorderTracer returns a new elasticapm.Tracer and
@@ -37,7 +36,7 @@ type RecorderTransport struct {
 }
 
 // SendStream records the stream such that it can later be obtained via Payloads.
-func (r *RecorderTransport) SendStream(ctx context.Context, stream *transport.Stream) error {
+func (r *RecorderTransport) SendStream(ctx context.Context, stream io.Reader) error {
 	return r.record(stream)
 }
 
@@ -54,7 +53,7 @@ func (r *RecorderTransport) Payloads() Payloads {
 	return r.payloads
 }
 
-func (r *RecorderTransport) record(stream *transport.Stream) error {
+func (r *RecorderTransport) record(stream io.Reader) error {
 	reader, err := zlib.NewReader(stream)
 	if err != nil {
 		panic(err)

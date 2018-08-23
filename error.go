@@ -177,6 +177,7 @@ func (e *Error) reset() {
 		Context:         e.Context,
 	}
 	e.Context.reset()
+	e.tracer.errorPool.Put(e)
 }
 
 // Send enqueues the error for sending to the Elastic APM server.
@@ -190,7 +191,6 @@ func (e *Error) Send() {
 		e.tracer.stats.ErrorsDropped++
 		e.tracer.statsMu.Unlock()
 		e.reset()
-		e.tracer.errorPool.Put(e)
 	}
 }
 

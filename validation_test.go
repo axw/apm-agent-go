@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/elastic/apm-agent-go"
 	"github.com/elastic/apm-agent-go/internal/fastjson"
-	"github.com/elastic/apm-agent-go/transport"
 )
 
 func TestValidateServiceName(t *testing.T) {
@@ -252,7 +252,7 @@ type validatingTransport struct {
 	w fastjson.Writer
 }
 
-func (t *validatingTransport) SendStream(ctx context.Context, s *transport.Stream) error {
+func (t *validatingTransport) SendStream(ctx context.Context, r io.Reader) error {
 	//t.validate(p, apmschema.Transactions)
 	return nil
 }

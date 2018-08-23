@@ -1,7 +1,6 @@
 package elasticapm
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"regexp"
@@ -450,25 +449,25 @@ func (t *Tracer) Stats() TracerStats {
 func (t *Tracer) loop() {
 	defer close(t.closed)
 
-	ctx, cancelContext := context.WithCancel(context.Background())
-	defer cancelContext()
-	go func() {
-		select {
-		case <-t.closing:
-			cancelContext()
-		}
-	}()
+	/*
+		ctx, cancelContext := context.WithCancel(context.Background())
+		defer cancelContext()
+		go func() {
+			select {
+			case <-t.closing:
+				cancelContext()
+			}
+		}()
+	*/
 
 	var cfg tracerConfig
-	var forceFlushed chan<- struct{}
-	var forceSentMetrics chan<- struct{}
-	var sendMetricsC <-chan time.Time
-	var gatheringMetrics bool
-	var transactions []*Transaction
-	var statsUpdates TracerStats
+	//var forceFlushed chan<- struct{}
+	//var forceSentMetrics chan<- struct{}
+	//var gatherMetricsC <-chan time.Time
+	//var gatheringMetrics bool
 
-	forceSendMetrics := t.forceSendMetrics
-	gatheredMetrics := make(chan struct{}, 1)
+	//forceSendMetrics := t.forceSendMetrics
+	//gatheredMetrics := make(chan struct{}, 1)
 	flushTimer := time.NewTimer(0)
 	if !flushTimer.Stop() {
 		<-flushTimer.C
@@ -477,74 +476,62 @@ func (t *Tracer) loop() {
 	if !metricsTimer.Stop() {
 		<-metricsTimer.C
 	}
-	startTimer := func(ch *<-chan time.Time, timer *time.Timer, interval time.Duration) {
-		if *ch != nil {
-			// Timer already started.
-			return
-		}
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
+	/*
+		startTimer := func(ch *<-chan time.Time, timer *time.Timer, interval time.Duration) {
+			if *ch != nil {
+				// Timer already started.
+				return
 			}
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			if interval <= 0 {
+				// Non-positive interval disables the timer.
+				return
+			}
+			timer.Reset(interval)
+			*ch = timer.C
 		}
-		if interval <= 0 {
-			// Non-positive interval disables the timer.
-			return
-		}
-		timer.Reset(interval)
-		*ch = timer.C
-	}
+	*/
 	startMetricsTimer := func() {
-		startTimer(&sendMetricsC, metricsTimer, cfg.metricsInterval)
-	}
-	enqueueTransaction := func(tx *Transaction) {
-		if cfg.maxTransactionQueueSize > 0 && len(transactions) >= cfg.maxTransactionQueueSize {
-			// The queue is full, pop off the older transactions
-			// to make room for the new one. It's possible that
-			// the max transaction queue size has changed.
-			n := uint64(len(transactions) - cfg.maxTransactionQueueSize + 1)
-			for _, tx := range transactions[:n] {
-				tx.reset()
-				t.transactionPool.Put(tx)
-			}
-			copy(transactions, transactions[n:])
-			transactions = transactions[:cfg.maxTransactionQueueSize-1]
-			statsUpdates.TransactionsDropped += n
-		}
-		transactions = append(transactions, tx)
+		//startTimer(&gatherMetricsC, metricsTimer, cfg.metricsInterval)
 	}
 
-	sender := newSender(t, &cfg, &statsUpdates)
-	sendError := func(e *Error) {
-		sender.sendError(e)
-		e.reset()
-		t.errorPool.Put(e)
-	}
-	sendTransaction := func(tx *Transaction) {
-		sender.sendTransaction(tx)
-		tx.reset()
-		t.transactionPool.Put(tx)
-	}
+	sender := newSender(t)
+	cfgC := sender.cfgC
+	//metricsC := sender.metrics
+
+	/*
+		sendError := func(e *Error) {
+			sender.sendError(e)
+			e.reset()
+		}
+		sendTransaction := func(tx *Transaction) {
+			sender.sendTransaction(tx)
+			tx.reset()
+		}
+	*/
 
 	for {
-		var closeStream bool
-		var gatherMetrics bool
-		var sendMetrics bool
-		statsUpdates = TracerStats{}
+		//var gatherMetrics bool
+		//var sendMetrics bool
 
-		errorsC := t.errors
-		forceFlush := t.forceFlush
-		flushTimerC := sender.flushTimer.C
-		if sender.sendingStream && !sender.streamOpen {
-			// While we're flushing, we discard new errors
-			// in favour of older ones, under the assumption
-			// that newer errors are more likely to be due
-			// to cascading failure.
-			errorsC = nil
-			forceFlush = nil
-			flushTimerC = nil
-		}
+		/*
+			forceFlush := t.forceFlush
+			flushTimerC := sender.flushTimer.C
+			if sender.sendingStream && !sender.streamOpen {
+				// While we're flushing, we discard new errors
+				// in favour of older ones, under the assumption
+				// that newer errors are more likely to be due
+				// to cascading failure.
+				errorsC = nil
+				forceFlush = nil
+				flushTimerC = nil
+			}
+		*/
 
 		select {
 		case <-t.closing:
@@ -552,112 +539,122 @@ func (t *Tracer) loop() {
 
 		case cmd := <-t.configCommands:
 			cmd(&cfg)
+			cfgC = sender.cfgC
 			startMetricsTimer()
 			continue
 
-		case err := <-sender.sentStream:
-			if err != nil && cfg.logger != nil {
-				// TODO(axw) set/extend grace period deadline
-				cfg.logger.Debugf("failed to send stream: %s", err)
-			}
-			sender.sendingStream = false
-			if forceFlushed != nil {
-				forceFlushed <- struct{}{}
-				forceFlushed = nil
-			}
+		case cfgC <- cfg:
+			cfgC = nil
 
-		case e := <-errorsC:
-			sendError(e)
-
-		case tx := <-t.transactions:
-			if sender.sendingStream && !sender.streamOpen {
-				// While we're flushing we still accept
-				// transactions, enqueuing them for when
-				// we can start a new request.
-				enqueueTransaction(tx)
-				continue
-			}
-			sendTransaction(tx)
-
-		case <-flushTimerC:
-			closeStream = true
-
-		case forceFlushed = <-forceFlush:
-			// forceFlushed will be signaled when the current request
-			// is successfully sent.
-			closeStream = true
-
-		case <-sendMetricsC:
-			sendMetricsC = nil
-			gatherMetrics = !gatheringMetrics
-
-		case forceSentMetrics = <-forceSendMetrics:
-			// forceSentMetrics will be signaled, and forceSendMetrics
-			// set back to t.forceSendMetrics, when metrics have been
-			// gathered and an attempt to send them has been made.
-			forceSendMetrics = nil
-			sendMetricsC = nil
-			gatherMetrics = !gatheringMetrics
-
-		case <-gatheredMetrics:
-			gatheringMetrics = false
-			sendMetrics = true
-		}
-
-		// Send as many enqueued/buffered transactions and errors as
-		// possible before closing the stream.
-		if sender.streamOpen || !sender.sendingStream {
-			for i, tx := range transactions {
-				if sender.sendingStream && !sender.streamOpen {
-					copy(transactions, transactions[i:])
-					transactions = transactions[:len(transactions)-i]
-					break
-				}
-				sendTransaction(tx)
-			}
-			for n := len(t.transactions); n > 0 && (sender.streamOpen || !sender.sendingStream); n-- {
-				sendTransaction(<-t.transactions)
-			}
-			for n := len(t.errors); n > 0 && (sender.streamOpen || !sender.sendingStream); n-- {
-				sendError(<-t.errors)
-			}
-		}
-		if closeStream && sender.streamOpen {
-			sender.closeStream()
-		}
-		if forceFlushed != nil && !sender.sendingStream {
-			// t.Flush was called, but there was no data being
-			// sent, or enqueued for sending. We can wake up
-			// the flusher immediately.
-			forceFlushed <- struct{}{}
-			forceFlushed = nil
-		}
-
-		if !statsUpdates.isZero() {
+		case stats := <-sender.statsC:
 			t.statsMu.Lock()
-			t.stats.accumulate(statsUpdates)
+			t.stats.accumulate(stats)
 			t.statsMu.Unlock()
+
+			/*
+				case err := <-sender.sentStream:
+					if err != nil && cfg.logger != nil {
+						// TODO(axw) set/extend grace period deadline
+						cfg.logger.Debugf("failed to send stream: %s", err)
+					}
+					sender.sendingStream = false
+					if forceFlushed != nil {
+						forceFlushed <- struct{}{}
+						forceFlushed = nil
+					}
+
+
+				case e := <-errorsC:
+					sendError(e)
+
+				case tx := <-t.transactions:
+					if sender.sendingStream && !sender.streamOpen {
+						// While we're flushing we still accept
+						// transactions, enqueuing them for when
+						// we can start a new request.
+						enqueueTransaction(tx)
+						continue
+					}
+					sendTransaction(tx)
+
+				case <-flushTimerC:
+					closeStream = true
+			*/
+
+			/*
+				case forceFlushed = <-forceFlush:
+					// forceFlushed will be signaled when the current request
+					// is successfully sent.
+					closeStream = true
+			*/
+
+			/*
+				case <-gatherMetricsC:
+					gatherMetricsC = nil
+					gatherMetrics = !gatheringMetrics
+			*/
+
+			/*
+				case forceSentMetrics = <-forceSendMetrics:
+					// forceSentMetrics will be signaled, and forceSendMetrics
+					// set back to t.forceSendMetrics, when metrics have been
+					// gathered and an attempt to send them has been made.
+					forceSendMetrics = nil
+					gatherMetricsC = nil
+					gatherMetrics = !gatheringMetrics
+
+			*/
+
+			/*
+				case <-gatheredMetrics:
+					gatheringMetrics = false
+					sendMetrics = true
+			*/
 		}
 
-		if gatherMetrics {
-			gatheringMetrics = true
-			sender.gatherMetrics(ctx, gatheredMetrics)
-		}
-		if sendMetrics {
-			sender.sendMetrics()
-			// We don't retry sending metrics on failure;
-			// inform the caller that an attempt was made
-			// regardless of the outcome, and restart the
-			// timer.
-			if forceSentMetrics != nil {
-				forceSentMetrics <- struct{}{}
-				forceSentMetrics = nil
-				forceSendMetrics = t.forceSendMetrics
+		/*
+			if gatherMetrics {
+				gatheringMetrics = true
+				sender.gatherMetrics(ctx, gatheredMetrics)
 			}
-			startMetricsTimer()
-		}
+
+			if sendMetrics {
+				sender.sendMetrics()
+				// We don't retry sending metrics on failure;
+				// inform the caller that an attempt was made
+				// regardless of the outcome, and restart the
+				// timer.
+				if forceSentMetrics != nil {
+					forceSentMetrics <- struct{}{}
+					forceSentMetrics = nil
+					forceSendMetrics = t.forceSendMetrics
+				}
+				startMetricsTimer()
+			}
+		*/
 	}
 }
+
+/*
+func (t *tracer) gatherMetrics(ctx context.Context, cfg tracerConfig, m *Metrics, gathered chan<- struct{}) {
+	timestamp := model.Time(time.Now().UTC())
+	var group sync.WaitGroup
+	for _, g := range cfg.metricsGatherers {
+		group.Add(1)
+		go func(g MetricsGatherer) {
+			defer group.Done()
+			gatherMetrics(ctx, g, m, logger)
+		}(g)
+	}
+	go func() {
+		group.Wait()
+		for _, m := range m.metrics {
+			m.Timestamp = timestamp
+		}
+		gathered <- struct{}{}
+	}()
+}
+*/
 
 // tracerConfig holds the tracer's runtime configuration, which may be modified
 // by sending a tracerConfigCommand to the tracer's configCommands channel.

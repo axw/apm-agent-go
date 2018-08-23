@@ -1,10 +1,14 @@
 package elasticapm
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
-	"sync"
+	"fmt"
+	"io"
 	"time"
 
+	"github.com/elastic/apm-agent-go/internal/iochan"
 	"github.com/elastic/apm-agent-go/model"
 	"github.com/elastic/apm-agent-go/stacktrace"
 	"github.com/elastic/apm-agent-go/transport"
@@ -16,13 +20,14 @@ var notSampled = false
 
 type sender struct {
 	tracer        *Tracer
-	cfg           *tracerConfig
-	stats         *TracerStats
+	buffer        *buffer
 	stream        *transport.Stream
-	flushTimer    *time.Timer
+	statsC        chan TracerStats
+	stats         TracerStats
+	cfgC          chan tracerConfig
+	cfg           tracerConfig
 	sendStream    chan struct{}
 	sentStream    chan error
-	streamOpen    bool
 	sendingStream bool
 	metrics       Metrics
 
@@ -30,170 +35,200 @@ type sender struct {
 	modelStacktrace []model.StacktraceFrame
 }
 
-func newSender(t *Tracer, cfg *tracerConfig, stats *TracerStats) *sender {
+func newSender(t *Tracer) *sender {
 	s := &sender{
 		tracer:     t,
-		cfg:        cfg,
-		stats:      stats,
-		flushTimer: time.NewTimer(0),
+		statsC:     make(chan TracerStats),
+		cfgC:       make(chan tracerConfig),
 		sendStream: make(chan struct{}, 1),
 		sentStream: make(chan error, 1),
 		stream:     transport.NewStream(),
 	}
-	if !s.flushTimer.Stop() {
-		<-s.flushTimer.C
-	}
-	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		defer s.closeStream()
-		for {
-			select {
-			case <-t.closed:
-				return
-			case <-s.sendStream:
-			}
-			s.sentStream <- s.tracer.Transport.SendStream(ctx, s.stream)
-		}
-	}()
+	go s.loop()
 	return s
 }
 
-func (s *sender) maybeStartStream() {
-	if s.streamOpen {
-		return
+func (s *sender) loop() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.cfg = <-s.cfgC
+
+	// TODO(axw) make the buffer size configurable
+	s.buffer = newBuffer(10 * 1024 * 1024)
+
+	// TODO(axw) make this configurable
+	requestSize := 768 * 1024
+
+	var req iochan.ReadRequest
+	var requestBuf bytes.Buffer
+	zlibWriter := zlib.NewWriter(&requestBuf)
+	zlibFlushed := true
+	zlibClosed := false
+	iochanReader := iochan.NewReader()
+	requestBytesRead := 0
+	requestActive := false
+	closeRequest := false
+	flushRequest := false
+	requestResult := make(chan error, 1)
+	requestTimer := time.NewTimer(0)
+	if !requestTimer.Stop() {
+		<-requestTimer.C
 	}
-	s.stream.Reset()
-	s.sendStream <- struct{}{}
 
-	// TODO(axw) introduce "grace period" which
-	// delays sending the stream after errors.
-
-	err := s.stream.WriteMetadata(
-		*s.tracer.system,
-		*s.tracer.process,
-		makeService(s.tracer.Service.Name, s.tracer.Service.Version, s.tracer.Service.Environment),
-	)
-	if err != nil {
-		if s.cfg.logger != nil {
-			s.cfg.logger.Debugf("failed to write metadata to stream")
+	for {
+		statsC := s.statsC
+		if s.stats.isZero() {
+			statsC = nil
 		}
-		return
-	}
 
-	s.streamOpen = true
-	s.sendingStream = true
-	s.flushTimer.Reset(s.cfg.requestDuration)
-}
-
-func (s *sender) maybeCloseStream() {
-	if !s.streamOpen {
-		return
-	}
-	// TODO(axw) make the limit configurable
-	const requestSizeLimit = 1024 * 1024
-	if s.stream.Flushed() < requestSizeLimit {
-		return
-	}
-	s.closeStream()
-}
-
-func (s *sender) closeStream() {
-	if err := s.stream.Close(); err != nil {
-		if s.cfg.logger != nil {
-			s.cfg.logger.Debugf("failed to close stream: %s", err)
-		}
-	}
-	s.streamOpen = false
-	if !s.flushTimer.Stop() {
 		select {
-		case <-s.flushTimer.C:
-		default:
+		case <-s.tracer.closed:
+			return
+		case s.cfg = <-s.cfgC:
+			continue
+		case statsC <- s.stats:
+			s.stats = TracerStats{}
+			continue
+		case tx := <-s.tracer.transactions:
+			s.writeTransaction(tx)
+		case e := <-s.tracer.errors:
+			s.writeError(e)
+			flushRequest = true
+		case <-requestTimer.C:
+			closeRequest = true
+		case req = <-iochanReader.C:
+		case err := <-requestResult:
+			if err != nil {
+				// TODO(axw) set/extend grace period
+				fmt.Println(err)
+				if s.cfg.logger != nil {
+					s.cfg.logger.Debugf("request failed: %s", err)
+				}
+			}
+			flushRequest = false
+			closeRequest = false
+			requestActive = false
+			requestBytesRead = 0
+			requestBuf.Reset()
+			if !requestTimer.Stop() {
+				<-requestTimer.C
+			}
+		}
+
+		// TODO(axw) make the goroutine below long-running, and send
+		// requests to start new requests?
+		if !requestActive && (s.buffer.Len() > 0 || requestBuf.Len() > 0) {
+			// TODO(axw) grace period after failed request.
+			go func() {
+				// TODO(axw) use multireader to write metadata first.
+				requestResult <- s.tracer.Transport.SendStream(ctx, iochanReader)
+			}()
+			requestActive = true
+			requestTimer.Reset(s.cfg.requestDuration)
+		}
+
+		if requestActive && (!closeRequest || !zlibClosed) {
+			for requestBytesRead+requestBuf.Len() < requestSize && s.buffer.Len() > 0 {
+				s.buffer.WriteTo(zlibWriter)
+				zlibWriter.Write([]byte("\n"))
+				zlibFlushed = false
+			}
+			if !closeRequest {
+				closeRequest = requestBytesRead+requestBuf.Len() >= requestSize
+			}
+		}
+		if closeRequest {
+			if !zlibClosed {
+				zlibWriter.Close()
+				zlibClosed = true
+			}
+		} else if flushRequest && !zlibFlushed {
+			zlibWriter.Flush()
+			flushRequest = false
+			zlibFlushed = true
+		}
+
+		if req.Buf != nil && (requestBuf.Len() > 0 || closeRequest) {
+			n, err := requestBuf.Read(req.Buf)
+			if closeRequest && err == nil && n <= len(req.Buf) {
+				err = io.EOF
+			}
+			req.Respond(n, err)
+			req.Buf = nil
+			if n > 0 {
+				requestBytesRead += n
+			}
 		}
 	}
 }
 
-// sendTransaction attempts to send a transaction to the APM server.
-func (s *sender) sendTransaction(tx *Transaction) {
+func (s *sender) writeTransaction(tx *Transaction) {
 	// TODO(axw) need to start sending spans independently.
 	s.modelSpans = s.modelSpans[:0]
 	s.modelStacktrace = s.modelStacktrace[:0]
 
 	var modelTx model.Transaction
 	s.buildModelTransaction(&modelTx, tx)
-	s.maybeStartStream()
-	if err := s.stream.WriteTransaction(modelTx); err != nil {
-		if s.cfg.logger != nil {
-			s.cfg.logger.Debugf("failed to write transaction: %s", err)
-		}
-		s.stats.Errors.WriteTransaction++
-		return
-	}
+	s.buffer.WriteTransaction(modelTx)
+	tx.reset()
 	s.stats.TransactionsSent++
-	s.maybeCloseStream()
 }
 
-// sendError attempts to send an error to the APM server.
-func (s *sender) sendError(e *Error) {
-	s.buildModelError(e)
-	s.maybeStartStream()
-	if err := s.stream.WriteError(e.model); err != nil {
-		if s.cfg.logger != nil {
-			s.cfg.logger.Debugf("failed to write error: %s", err)
-		}
-		s.stats.Errors.WriteError++
-		return
-	}
+func (s *sender) writeError(e *Error) {
+	s.buffer.WriteError(e.model)
+	e.reset()
 	s.stats.ErrorsSent++
-	s.maybeCloseStream()
 }
 
 // sendMetrics attempts to send metrics to the APM server. This must be
 // called after gatherMetrics has signalled that metrics have all been
 // gathered.
-func (s *sender) sendMetrics() {
-	if len(s.metrics.metrics) == 0 {
-		return
-	}
-	s.maybeStartStream()
-	for _, metrics := range s.metrics.metrics {
-		if err := s.stream.WriteMetrics(*metrics); err != nil {
-			if s.cfg.logger != nil {
-				s.cfg.logger.Debugf("failed to send metrics: %s", err)
-			}
-			s.stats.Errors.WriteMetrics++
+func (s *sender) sendMetrics(logger Logger) {
+	/*
+		if len(s.metrics.metrics) == 0 {
+			return
 		}
-	}
-	s.metrics.reset()
-	s.maybeCloseStream()
+		for _, metrics := range s.metrics.metrics {
+			if err := s.stream.WriteMetrics(*metrics); err != nil {
+				if logger != nil {
+					logger.Debugf("failed to send metrics: %s", err)
+				}
+				s.stats.Errors.WriteMetrics++
+			}
+		}
+		s.metrics.reset()
+	*/
 }
 
 // gatherMetrics gathers metrics from each of the registered
 // metrics gatherers. Once all gatherers have returned, a value
 // will be sent on the "gathered" channel.
 func (s *sender) gatherMetrics(ctx context.Context, gathered chan<- struct{}) {
-	// s.cfg must not be used within the goroutines, as it may be
-	// concurrently mutated by the main tracer goroutine. Take a
-	// copy of the current config.
-	logger := s.cfg.logger
+	/*
+		// s.cfg must not be used within the goroutines, as it may be
+		// concurrently mutated by the main tracer goroutine. Take a
+		// copy of the current config.
+		logger := s.cfg.logger
 
-	timestamp := model.Time(time.Now().UTC())
-	var group sync.WaitGroup
-	for _, g := range s.cfg.metricsGatherers {
-		group.Add(1)
-		go func(g MetricsGatherer) {
-			defer group.Done()
-			gatherMetrics(ctx, g, &s.metrics, logger)
-		}(g)
-	}
-
-	go func() {
-		group.Wait()
-		for _, m := range s.metrics.metrics {
-			m.Timestamp = timestamp
+		timestamp := model.Time(time.Now().UTC())
+		var group sync.WaitGroup
+		for _, g := range s.cfg.metricsGatherers {
+			group.Add(1)
+			go func(g MetricsGatherer) {
+				defer group.Done()
+				gatherMetrics(ctx, g, &s.metrics, logger)
+			}(g)
 		}
-		gathered <- struct{}{}
-	}()
+
+		go func() {
+			group.Wait()
+			for _, m := range s.metrics.metrics {
+				m.Timestamp = timestamp
+			}
+			gathered <- struct{}{}
+		}()
+	*/
 }
 
 func (s *sender) buildModelTransaction(out *model.Transaction, tx *Transaction) {

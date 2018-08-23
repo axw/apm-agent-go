@@ -2,18 +2,18 @@ package elasticapm
 
 import (
 	"bytes"
+	"io"
 
 	"github.com/elastic/apm-agent-go/internal/fastjson"
 	"github.com/elastic/apm-agent-go/model"
 )
 
 type buffer struct {
-	buf     []byte
-	readbuf []byte
-	len     int
-	write   int // index into "start" at which
-	read    int
-	json    fastjson.Writer
+	buf   []byte
+	len   int
+	write int
+	read  int
+	json  fastjson.Writer
 }
 
 // newBuffer returns a new buffer with the given size in bytes.
@@ -31,11 +31,10 @@ func (b *buffer) Cap() int {
 	return len(b.buf)
 }
 
-func (b *buffer) Pop() []byte {
+func (b *buffer) WriteTo(w io.Writer) (written int64, err error) {
 	if b.len == 0 {
-		return nil
+		return 0, io.EOF
 	}
-	b.readbuf = b.readbuf[:0]
 more:
 	tailcap := b.Cap() - b.read
 	taillen := tailcap
@@ -48,15 +47,18 @@ more:
 		if tailcap > taillen {
 			panic("missing delimeter")
 		}
-		b.readbuf = append(b.readbuf, tail...)
+		if n, err := w.Write(tail); err != nil {
+			return int64(n), err
+		}
 		b.read = 0
 		b.len -= taillen
+		written += int64(taillen)
 		goto more
 	}
 	b.read = (b.read + end + 1) % b.Cap()
 	b.len -= end + 1
-	b.readbuf = append(b.readbuf, tail[:end]...)
-	return b.readbuf
+	n, err := w.Write(tail[:end])
+	return written + int64(n), err
 }
 
 // WriteTransaction writes tx to the buffer.

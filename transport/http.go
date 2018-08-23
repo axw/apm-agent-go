@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -129,9 +130,9 @@ func (t *HTTPTransport) SetUserAgent(ua string) {
 }
 
 // SendStream sends the stream over HTTP.
-func (t *HTTPTransport) SendStream(ctx context.Context, s *Stream) error {
+func (t *HTTPTransport) SendStream(ctx context.Context, r io.Reader) error {
 	req := t.newRequest(t.intakeURL)
-	req.Body = ioutil.NopCloser(s)
+	req.Body = ioutil.NopCloser(r)
 
 	resp, err := t.Client.Do(req)
 	if err != nil {

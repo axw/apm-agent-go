@@ -11,11 +11,8 @@ type TracerStats struct {
 
 // TracerStatsErrors holds error statistics for a Tracer.
 type TracerStatsErrors struct {
-	SetContext       uint64
-	SendStream       uint64
-	WriteTransaction uint64
-	WriteError       uint64
-	WriteMetrics     uint64
+	SetContext uint64
+	SendStream uint64
 }
 
 func (s TracerStats) isZero() bool {
@@ -27,9 +24,6 @@ func (s TracerStats) isZero() bool {
 func (s *TracerStats) accumulate(rhs TracerStats) {
 	s.Errors.SetContext += rhs.Errors.SetContext
 	s.Errors.SendStream += rhs.Errors.SendStream
-	s.Errors.WriteTransaction += rhs.Errors.WriteTransaction
-	s.Errors.WriteError += rhs.Errors.WriteError
-	s.Errors.WriteMetrics += rhs.Errors.WriteMetrics
 	s.ErrorsSent += rhs.ErrorsSent
 	s.ErrorsDropped += rhs.ErrorsDropped
 	s.TransactionsSent += rhs.TransactionsSent
