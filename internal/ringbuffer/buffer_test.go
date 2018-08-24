@@ -3,6 +3,8 @@ package ringbuffer
 import (
 	"bytes"
 	"io"
+	"io/ioutil"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,14 +51,32 @@ func TestBufferEviction(t *testing.T) {
 }
 
 func BenchmarkWrite(b *testing.B) {
-	var data [8192]byte
+	data := []byte(strings.Repeat("*", 100))
 	buf := newBuffer(10 * 1024 * 1024)
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		n, err := buf.Write(data[:])
 		if err != nil {
 			panic(err)
 		}
 		b.SetBytes(int64(n))
+	}
+}
+
+func BenchmarkWriteTo(b *testing.B) {
+	data := []byte(strings.Repeat("*", 100))
+	buf := newBuffer(b.N * (len(data) + BlockOverhead))
+	for i := 0; i < b.N; i++ {
+		buf.Write(data[:])
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		n, err := buf.WriteTo(ioutil.Discard)
+		if err != nil {
+			panic(err)
+		}
+		b.SetBytes(n)
 	}
 }

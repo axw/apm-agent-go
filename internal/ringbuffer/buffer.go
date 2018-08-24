@@ -6,6 +6,10 @@ import (
 	"io/ioutil"
 )
 
+// BlockOverhead is the number of additional writes per block of data
+// written to the buffer for block accounting.
+const BlockOverhead = 1
+
 // buffer is a buffer of blocks. Each block is written and read discretely.
 type buffer struct {
 	buf   []byte
