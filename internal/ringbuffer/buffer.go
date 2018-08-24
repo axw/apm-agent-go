@@ -2,87 +2,100 @@ package ringbuffer
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"io/ioutil"
 )
 
 // BlockOverhead is the number of additional writes per block of data
 // written to the buffer for block accounting.
-const BlockOverhead = 1
+const BlockOverhead = 4
 
 // buffer is a buffer of blocks. Each block is written and read discretely.
-type buffer struct {
-	buf   []byte
-	len   int
-	write int
-	read  int
+type Buffer struct {
+	buf     []byte
+	sizebuf [4]byte
+	len     int
+	write   int
+	read    int
 }
 
-// newBuffer returns a new buffer with the given size in bytes.
-func newBuffer(size int) *buffer {
-	return &buffer{
-		// TODO(axw) grow to size as required? profile
-		buf: make([]byte, size),
-	}
+// New returns a new Buffer with the given size in bytes.
+func New(size int) *Buffer {
+	return &Buffer{buf: make([]byte, size)}
 }
 
-func (b *buffer) Len() int {
+// Len returns the number of bytes currently in the buffer, including
+// block-accounting bytes.
+func (b *Buffer) Len() int {
 	return b.len
 }
 
-func (b *buffer) Cap() int {
+// Cap returns the capacity of the buffer.
+func (b *Buffer) Cap() int {
 	return len(b.buf)
 }
 
-func (b *buffer) WriteTo(w io.Writer) (written int64, err error) {
+// WriteTo writes the oldest block in b to w, and returns its size in bytes.
+func (b *Buffer) WriteTo(w io.Writer) (written int64, err error) {
 	if b.len == 0 {
 		return 0, io.EOF
 	}
-more:
-	tailcap := b.Cap() - b.read
-	taillen := tailcap
-	if taillen > b.len {
-		taillen = b.len
+	if n := copy(b.sizebuf[:], b.buf[b.read:]); n < len(b.sizebuf) {
+		b.read = copy(b.sizebuf[n:], b.buf[:])
+	} else {
+		b.read = (b.read + n) % b.Cap()
 	}
-	tail := b.buf[b.read : b.read+taillen]
-	end := bytes.IndexByte(tail, 0)
-	if end == -1 {
-		if tailcap > taillen {
-			panic("missing delimeter")
-		}
-		if n, err := w.Write(tail); err != nil {
+	b.len -= len(b.sizebuf)
+	size := int(binary.LittleEndian.Uint32(b.sizebuf[:]))
+
+	if b.read+size > b.Cap() {
+		tail := b.buf[b.read:]
+		n, err := w.Write(tail)
+		if err != nil {
+			b.read = (b.read + size) % b.Cap()
+			b.len -= size + len(b.sizebuf)
 			return int64(n), err
 		}
+		size -= n
+		written = int64(n)
 		b.read = 0
-		b.len -= taillen
-		written += int64(taillen)
-		goto more
+		b.len -= n
 	}
-	b.read = (b.read + end + 1) % b.Cap()
-	b.len -= end + 1
-	n, err := w.Write(tail[:end])
-	return written + int64(n), err
+	n, err := w.Write(b.buf[b.read : b.read+size])
+	if err != nil {
+		return written + int64(n), err
+	}
+	written += int64(n)
+	b.read = (b.read + size) % b.Cap()
+	b.len -= size
+	return written, nil
 }
 
-func (b *buffer) Write(p []byte) (int, error) {
-	// TODO(axw) use size header? profile
-	lenp := len(p) + 1 // +1 for delimeter
-	if lenp > b.Cap() {
-		// Buffer is too small to hold the object, silently drop.
+// Write writes p as a block to b.
+//
+// If len(p)+BlockOverhead > b.Cap(), bytes.ErrTooLarge will be returned.
+// If the buffer does not currently have room for the block, then the
+// oldest blocks will be evicted until enough room is available.
+func (b *Buffer) Write(p []byte) (int, error) {
+	lenp := len(p)
+	if lenp+BlockOverhead > b.Cap() {
 		return 0, bytes.ErrTooLarge
 	}
-	for lenp > b.Cap()-b.Len() {
+	for lenp+BlockOverhead > b.Cap()-b.Len() {
 		b.WriteTo(ioutil.Discard)
 	}
-	n := copy(b.buf[b.write:], p)
-	if n < lenp-1 {
-		// Copy rest to beginning of buffer
+	binary.LittleEndian.PutUint32(b.sizebuf[:], uint32(lenp))
+	if n := copy(b.buf[b.write:], b.sizebuf[:]); n < len(b.sizebuf) {
+		b.write = copy(b.buf, b.sizebuf[n:])
+	} else {
+		b.write = (b.write + n) % b.Cap()
+	}
+	if n := copy(b.buf[b.write:], p); n < lenp {
 		b.write = copy(b.buf, p[n:])
 	} else {
 		b.write = (b.write + n) % b.Cap()
 	}
-	b.buf[b.write] = 0
-	b.write++
-	b.len += lenp
+	b.len += lenp + BlockOverhead
 	return lenp, nil
 }
