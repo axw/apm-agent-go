@@ -1,4 +1,4 @@
-package elasticapm
+package ringbuffer
 
 import (
 	"bytes"
@@ -46,4 +46,17 @@ func TestBufferEviction(t *testing.T) {
 		assert.Equal(t, block, bb.String())
 	}
 	assert.Equal(t, 0, b.Len())
+}
+
+func BenchmarkWrite(b *testing.B) {
+	var data [8192]byte
+	buf := newBuffer(10 * 1024 * 1024)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		n, err := buf.Write(data[:])
+		if err != nil {
+			panic(err)
+		}
+		b.SetBytes(int64(n))
+	}
 }

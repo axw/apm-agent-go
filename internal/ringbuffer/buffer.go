@@ -1,4 +1,4 @@
-package elasticapm
+package ringbuffer
 
 import (
 	"bytes"
