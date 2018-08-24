@@ -250,6 +250,20 @@ func newTracer(opts options) *Tracer {
 	return t
 }
 
+// tracerConfig holds the tracer's runtime configuration, which may be modified
+// by sending a tracerConfigCommand to the tracer's configCommands channel.
+type tracerConfig struct {
+	requestDuration         time.Duration
+	metricsInterval         time.Duration
+	logger                  Logger
+	metricsGatherers        []MetricsGatherer
+	contextSetter           stacktrace.ContextSetter
+	preContext, postContext int
+	sanitizedFieldNames     *regexp.Regexp
+}
+
+type tracerConfigCommand func(*tracerConfig)
+
 // Close closes the Tracer, preventing transactions from being
 // sent to the APM server.
 func (t *Tracer) Close() {
@@ -638,17 +652,3 @@ func (t *tracer) gatherMetrics(ctx context.Context, cfg tracerConfig, m *Metrics
 	}()
 }
 */
-
-// tracerConfig holds the tracer's runtime configuration, which may be modified
-// by sending a tracerConfigCommand to the tracer's configCommands channel.
-type tracerConfig struct {
-	requestDuration         time.Duration
-	metricsInterval         time.Duration
-	logger                  Logger
-	metricsGatherers        []MetricsGatherer
-	contextSetter           stacktrace.ContextSetter
-	preContext, postContext int
-	sanitizedFieldNames     *regexp.Regexp
-}
-
-type tracerConfigCommand func(*tracerConfig)
