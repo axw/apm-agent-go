@@ -56,6 +56,7 @@ func (s *sender) loop() {
 	var requestBuf bytes.Buffer
 	var metadata []byte
 	var gracePeriod time.Duration = -1
+	var flushed chan<- struct{}
 	zlibWriter := zlib.NewWriter(&requestBuf)
 	zlibFlushed := true
 	zlibClosed := false
@@ -87,9 +88,19 @@ func (s *sender) loop() {
 		case tx := <-s.tracer.transactions:
 			s.writeTransaction(tx)
 		case e := <-s.tracer.errors:
+			// Flush the buffer to transmit the error immediately.
 			s.writeError(e)
 			flushRequest = true
 		case <-requestTimer.C:
+			closeRequest = true
+		case flushed = <-s.tracer.forceFlush:
+			// Drain any objects buffered in the channels.
+			for n := len(s.tracer.errors); n > 0; n-- {
+				s.writeError(<-s.tracer.errors)
+			}
+			for n := len(s.tracer.transactions); n > 0; n-- {
+				s.writeTransaction(<-s.tracer.transactions)
+			}
 			closeRequest = true
 		case req = <-iochanReader.C:
 		case err := <-requestResult:
@@ -101,6 +112,10 @@ func (s *sender) loop() {
 			} else {
 				// Reset grace period after success.
 				gracePeriod = -1
+			}
+			if flushed != nil {
+				flushed <- struct{}{}
+				flushed = nil
 			}
 			flushRequest = false
 			closeRequest = false
@@ -197,6 +212,7 @@ func (s *sender) writeTransaction(tx *Transaction) {
 }
 
 func (s *sender) writeError(e *Error) {
+	s.buildModelError(e)
 	s.buffer.WriteError(e.model)
 	e.reset()
 	s.stats.ErrorsSent++

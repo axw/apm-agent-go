@@ -144,12 +144,16 @@ func testTracerServiceNameSanitization(t *testing.T, sanitizedServiceName string
 		cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$")
 		cmd.Env = append(os.Environ(), "_INSIDE_TEST=1")
 		cmd.Env = append(cmd.Env, env...)
-		err := cmd.Run()
-		assert.NoError(t, err)
+		output, err := cmd.CombinedOutput()
+		if !assert.NoError(t, err) {
+			t.Logf("output:\n%s", output)
+		}
 		return
 	}
 
-	tracer, transport := transporttest.NewRecorderTracer()
+	var transport transporttest.RecorderTransport
+	tracer, _ := elasticapm.NewTracer("", "")
+	tracer.Transport = &transport
 	defer tracer.Close()
 
 	tx := tracer.StartTransaction("name", "type")
