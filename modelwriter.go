@@ -2,6 +2,7 @@ package elasticapm
 
 import (
 	"github.com/elastic/apm-agent-go/internal/fastjson"
+	"github.com/elastic/apm-agent-go/internal/ringbuffer"
 	"github.com/elastic/apm-agent-go/model"
 	"github.com/elastic/apm-agent-go/stacktrace"
 )
@@ -11,7 +12,7 @@ import (
 var notSampled = false
 
 type modelWriter struct {
-	buffer          *buffer
+	buffer          *ringbuffer.Buffer
 	cfg             *tracerConfig
 	stats           *TracerStats
 	json            fastjson.Writer
@@ -114,14 +115,6 @@ func (w *modelWriter) buildModelSpan(out *model.Span, span *Span) {
 
 func (w *modelWriter) buildModelError(e *Error) {
 	// TODO(axw) move the model type outside of Error
-	if e.Transaction != nil {
-		if !e.Transaction.traceContext.Span.isZero() {
-			e.model.TraceID = model.TraceID(e.Transaction.traceContext.Trace)
-			e.model.ParentID = model.SpanID(e.Transaction.traceContext.Span)
-		} else {
-			e.model.Transaction.ID = model.UUID(e.Transaction.traceContext.Trace)
-		}
-	}
 	w.setStacktraceContext(e.modelStacktrace)
 	e.setStacktrace()
 	e.setCulprit()

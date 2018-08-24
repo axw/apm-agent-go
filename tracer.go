@@ -14,6 +14,7 @@ import (
 
 	"github.com/elastic/apm-agent-go/internal/fastjson"
 	"github.com/elastic/apm-agent-go/internal/iochan"
+	"github.com/elastic/apm-agent-go/internal/ringbuffer"
 	"github.com/elastic/apm-agent-go/model"
 	"github.com/elastic/apm-agent-go/stacktrace"
 	"github.com/elastic/apm-agent-go/transport"
@@ -173,7 +174,6 @@ type Tracer struct {
 	configCommands     chan tracerConfigCommand
 	transactions       chan *Transaction
 	errors             chan *Error
-	buffer             *buffer
 
 	statsMu sync.Mutex
 	stats   TracerStats
@@ -456,7 +456,7 @@ func (t *Tracer) loop() {
 	defer close(t.closed)
 
 	// TODO(axw) make the buffer size configurable
-	buffer := newBuffer(defaultAPIBufferSize)
+	buffer := ringbuffer.New(defaultAPIBufferSize)
 
 	// TODO(axw) make this configurable
 	requestSize := defaultAPIRequestSize

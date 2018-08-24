@@ -45,7 +45,14 @@ func (t *Tracer) Recovered(v interface{}, tx *Transaction) *Error {
 	default:
 		e = t.NewError(fmt.Errorf("%v", v))
 	}
-	e.Transaction = tx
+	if tx != nil {
+		if !tx.traceContext.Span.isZero() {
+			e.model.TraceID = model.TraceID(tx.traceContext.Trace)
+			e.model.ParentID = model.SpanID(tx.traceContext.Span)
+		} else {
+			e.model.Transaction.ID = model.UUID(tx.traceContext.Trace)
+		}
+	}
 	return e
 }
 
@@ -149,11 +156,6 @@ type Error struct {
 	// non-library frame in the stacktrace will be considered the
 	// culprit.
 	Culprit string
-
-	// Transaction is the transaction to which the error correspoonds,
-	// if any. If this is set, the error's Send method must be called
-	// before the transaction's End method.
-	Transaction *Transaction
 
 	// Timestamp records the time at which the error occurred.
 	// This is set when the Error object is created, but may
