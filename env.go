@@ -32,10 +32,12 @@ const (
 	// XXX
 	envAPIRequestSize = "ELASTIC_APM_API_REQUEST_SIZE"
 	envAPIRequestTime = "ELASTIC_APM_API_REQUEST_TIME"
+	envAPIBufferSize  = "ELASTIC_APM_API_BUFFER_SIZE"
 
 	defaultAPIRequestSize        = 768 * 1024 // 768KiB/0.75MiB
 	defaultAPIRequestTime        = 10 * time.Second
-	defaultMetricsInterval       = 0 // disabled by default
+	defaultAPIBufferSize         = 10 * 1024 * 1024 // 10MiB
+	defaultMetricsInterval       = 0                // disabled by default
 	defaultMaxSpans              = 500
 	defaultCaptureBody           = CaptureBodyOff
 	defaultSpanFramesMinDuration = 5 * time.Millisecond

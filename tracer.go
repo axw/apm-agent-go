@@ -1,13 +1,19 @@
 package elasticapm
 
 import (
+	"bytes"
+	"compress/zlib"
+	"context"
 	"fmt"
+	"io"
 	"log"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/elastic/apm-agent-go/internal/fastjson"
+	"github.com/elastic/apm-agent-go/internal/iochan"
 	"github.com/elastic/apm-agent-go/model"
 	"github.com/elastic/apm-agent-go/stacktrace"
 	"github.com/elastic/apm-agent-go/transport"
@@ -167,6 +173,7 @@ type Tracer struct {
 	configCommands     chan tracerConfigCommand
 	transactions       chan *Transaction
 	errors             chan *Error
+	buffer             *buffer
 
 	statsMu sync.Mutex
 	stats   TracerStats
@@ -444,177 +451,181 @@ func (t *Tracer) Stats() TracerStats {
 }
 
 func (t *Tracer) loop() {
+	ctx, cancelContext := context.WithCancel(context.Background())
+	defer cancelContext()
 	defer close(t.closed)
 
-	/*
-		ctx, cancelContext := context.WithCancel(context.Background())
-		defer cancelContext()
-		go func() {
-			select {
-			case <-t.closing:
-				cancelContext()
-			}
-		}()
-	*/
+	// TODO(axw) make the buffer size configurable
+	buffer := newBuffer(defaultAPIBufferSize)
 
-	var cfg tracerConfig
+	// TODO(axw) make this configurable
+	requestSize := defaultAPIRequestSize
+
+	var req iochan.ReadRequest
+	var requestBuf bytes.Buffer
+	var metadata []byte
+	var gracePeriod time.Duration = -1
+	var flushed chan<- struct{}
+	zlibWriter := zlib.NewWriter(&requestBuf)
+	zlibFlushed := true
+	zlibClosed := false
+	iochanReader := iochan.NewReader()
+	requestBytesRead := 0
+	requestActive := false
+	closeRequest := false
+	flushRequest := false
+	requestResult := make(chan error, 1)
+	requestTimer := time.NewTimer(0)
+	if !requestTimer.Stop() {
+		<-requestTimer.C
+	}
+
 	//var forceFlushed chan<- struct{}
 	//var forceSentMetrics chan<- struct{}
 	//var gatherMetricsC <-chan time.Time
 	//var gatheringMetrics bool
-
 	//forceSendMetrics := t.forceSendMetrics
 	//gatheredMetrics := make(chan struct{}, 1)
-	flushTimer := time.NewTimer(0)
-	if !flushTimer.Stop() {
-		<-flushTimer.C
-	}
 	metricsTimer := time.NewTimer(0)
 	if !metricsTimer.Stop() {
 		<-metricsTimer.C
 	}
-	/*
-		startTimer := func(ch *<-chan time.Time, timer *time.Timer, interval time.Duration) {
-			if *ch != nil {
-				// Timer already started.
-				return
-			}
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			if interval <= 0 {
-				// Non-positive interval disables the timer.
-				return
-			}
-			timer.Reset(interval)
-			*ch = timer.C
-		}
-	*/
 	startMetricsTimer := func() {
 		//startTimer(&gatherMetricsC, metricsTimer, cfg.metricsInterval)
 	}
 
-	sender := newSender(t)
-	cfgC := sender.cfgC
-	//metricsC := sender.metrics
-
-	/*
-		sendError := func(e *Error) {
-			sender.sendError(e)
-			e.reset()
-		}
-		sendTransaction := func(tx *Transaction) {
-			sender.sendTransaction(tx)
-			tx.reset()
-		}
-	*/
-
+	var stats TracerStats
+	var cfg tracerConfig
+	modelWriter := modelWriter{
+		buffer: buffer,
+		cfg:    &cfg,
+		stats:  &stats,
+	}
 	for {
-		//var gatherMetrics bool
-		//var sendMetrics bool
-
-		/*
-			forceFlush := t.forceFlush
-			flushTimerC := sender.flushTimer.C
-			if sender.sendingStream && !sender.streamOpen {
-				// While we're flushing, we discard new errors
-				// in favour of older ones, under the assumption
-				// that newer errors are more likely to be due
-				// to cascading failure.
-				errorsC = nil
-				forceFlush = nil
-				flushTimerC = nil
-			}
-		*/
-
 		select {
 		case <-t.closing:
 			return
-
 		case cmd := <-t.configCommands:
 			cmd(&cfg)
-			cfgC = sender.cfgC
 			startMetricsTimer()
 			continue
+		case tx := <-t.transactions:
+			modelWriter.writeTransaction(tx)
+		case e := <-t.errors:
+			// Flush the buffer to transmit the error immediately.
+			modelWriter.writeError(e)
+			flushRequest = true
+		case <-requestTimer.C:
+			closeRequest = true
+		case flushed = <-t.forceFlush:
+			// Drain any objects buffered in the channels.
+			for n := len(t.errors); n > 0; n-- {
+				modelWriter.writeError(<-t.errors)
+			}
+			for n := len(t.transactions); n > 0; n-- {
+				modelWriter.writeTransaction(<-t.transactions)
+			}
+			closeRequest = true
+		case req = <-iochanReader.C:
+		case err := <-requestResult:
+			if err != nil {
+				gracePeriod = nextGracePeriod(gracePeriod)
+				if cfg.logger != nil {
+					cfg.logger.Debugf("request failed (next request in %s): %s", err, gracePeriod)
+				}
+			} else {
+				// Reset grace period after success.
+				gracePeriod = -1
+			}
+			if flushed != nil {
+				flushed <- struct{}{}
+				flushed = nil
+			}
+			flushRequest = false
+			closeRequest = false
+			requestActive = false
+			requestBytesRead = 0
+			requestBuf.Reset()
+			if !requestTimer.Stop() {
+				<-requestTimer.C
+			}
+		}
 
-		case cfgC <- cfg:
-			cfgC = nil
+		/*
+			case <-gatherMetricsC:
+				gatherMetricsC = nil
+				gatherMetrics = !gatheringMetrics
+			case forceSentMetrics = <-forceSendMetrics:
+				// forceSentMetrics will be signaled, and forceSendMetrics
+				// set back to t.forceSendMetrics, when metrics have been
+				// gathered and an attempt to send them has been made.
+				forceSendMetrics = nil
+				gatherMetricsC = nil
+				gatherMetrics = !gatheringMetrics
+			case <-gatheredMetrics:
+				gatheringMetrics = false
+				sendMetrics = true
+		*/
 
-		case stats := <-sender.statsC:
-			t.statsMu.Lock()
-			t.stats.accumulate(stats)
-			t.statsMu.Unlock()
-
-			/*
-				case err := <-sender.sentStream:
-					if err != nil && cfg.logger != nil {
-						// TODO(axw) set/extend grace period deadline
-						cfg.logger.Debugf("failed to send stream: %s", err)
+		// TODO(axw) make the goroutine below long-running, and send
+		// requests to start new requests?
+		if !requestActive && (buffer.Len() > 0 || requestBuf.Len() > 0) {
+			go func() {
+				if gracePeriod > 0 {
+					select {
+					case <-time.After(gracePeriod):
+					case <-ctx.Done():
 					}
-					sender.sendingStream = false
-					if forceFlushed != nil {
-						forceFlushed <- struct{}{}
-						forceFlushed = nil
-					}
+				}
+				requestResult <- t.Transport.SendStream(ctx, iochanReader)
+			}()
+			if metadata == nil {
+				metadata = t.jsonRequestMetadata()
+			}
+			zlibWriter.Write(metadata)
+			zlibFlushed = false
+			requestActive = true
+			requestTimer.Reset(cfg.requestDuration)
+		}
 
+		if requestActive && (!closeRequest || !zlibClosed) {
+			for requestBytesRead+requestBuf.Len() < requestSize && buffer.Len() > 0 {
+				buffer.WriteTo(zlibWriter)
+				zlibWriter.Write([]byte("\n"))
+				zlibFlushed = false
+			}
+			if !closeRequest {
+				closeRequest = requestBytesRead+requestBuf.Len() >= requestSize
+			}
+		}
+		if closeRequest {
+			if !zlibClosed {
+				zlibWriter.Close()
+				zlibClosed = true
+			}
+		} else if flushRequest && !zlibFlushed {
+			zlibWriter.Flush()
+			flushRequest = false
+			zlibFlushed = true
+		}
 
-				case e := <-errorsC:
-					sendError(e)
-
-				case tx := <-t.transactions:
-					if sender.sendingStream && !sender.streamOpen {
-						// While we're flushing we still accept
-						// transactions, enqueuing them for when
-						// we can start a new request.
-						enqueueTransaction(tx)
-						continue
-					}
-					sendTransaction(tx)
-
-				case <-flushTimerC:
-					closeStream = true
-			*/
-
-			/*
-				case forceFlushed = <-forceFlush:
-					// forceFlushed will be signaled when the current request
-					// is successfully sent.
-					closeStream = true
-			*/
-
-			/*
-				case <-gatherMetricsC:
-					gatherMetricsC = nil
-					gatherMetrics = !gatheringMetrics
-			*/
-
-			/*
-				case forceSentMetrics = <-forceSendMetrics:
-					// forceSentMetrics will be signaled, and forceSendMetrics
-					// set back to t.forceSendMetrics, when metrics have been
-					// gathered and an attempt to send them has been made.
-					forceSendMetrics = nil
-					gatherMetricsC = nil
-					gatherMetrics = !gatheringMetrics
-
-			*/
-
-			/*
-				case <-gatheredMetrics:
-					gatheringMetrics = false
-					sendMetrics = true
-			*/
+		if req.Buf != nil && (requestBuf.Len() > 0 || closeRequest) {
+			n, err := requestBuf.Read(req.Buf)
+			if closeRequest && err == nil && n <= len(req.Buf) {
+				err = io.EOF
+			}
+			req.Respond(n, err)
+			req.Buf = nil
+			if n > 0 {
+				requestBytesRead += n
+			}
 		}
 
 		/*
 			if gatherMetrics {
 				gatheringMetrics = true
-				sender.gatherMetrics(ctx, gatheredMetrics)
+				t.gatherMetrics(ctx, cfg.metricsGatherers, &metrics, cfg.logger, gatheredMetrics)
 			}
-
 			if sendMetrics {
 				sender.sendMetrics()
 				// We don't retry sending metrics on failure;
@@ -629,18 +640,44 @@ func (t *Tracer) loop() {
 				startMetricsTimer()
 			}
 		*/
+
+		if !stats.isZero() {
+			t.statsMu.Lock()
+			t.stats.accumulate(stats)
+			t.statsMu.Unlock()
+			stats = TracerStats{}
+		}
 	}
 }
 
-/*
-func (t *tracer) gatherMetrics(ctx context.Context, cfg tracerConfig, m *Metrics, gathered chan<- struct{}) {
+// jsonRequestMetadata returns a JSON-encoded metadata object that features
+// at the head of every request body. This is called exactly once, when the
+// first request is made.
+func (t *Tracer) jsonRequestMetadata() []byte {
+	var json fastjson.Writer
+	service := makeService(t.Service.Name, t.Service.Version, t.Service.Environment)
+	json.RawString(`{"metadata":{`)
+	json.RawString(`"system":`)
+	t.system.MarshalFastJSON(&json)
+	json.RawString(`,"process":`)
+	t.process.MarshalFastJSON(&json)
+	json.RawString(`,"service":`)
+	service.MarshalFastJSON(&json)
+	json.RawString(`}}`)
+	return json.Bytes()
+}
+
+// gatherMetrics gathers metrics from each of the registered
+// metrics gatherers. Once all gatherers have returned, a value
+// will be sent on the "gathered" channel.
+func (t *Tracer) gatherMetrics(ctx context.Context, gatherers []MetricsGatherer, m *Metrics, l Logger, gathered chan<- struct{}) {
 	timestamp := model.Time(time.Now().UTC())
 	var group sync.WaitGroup
-	for _, g := range cfg.metricsGatherers {
+	for _, g := range gatherers {
 		group.Add(1)
 		go func(g MetricsGatherer) {
 			defer group.Done()
-			gatherMetrics(ctx, g, m, logger)
+			gatherMetrics(ctx, g, m, l)
 		}(g)
 	}
 	go func() {
@@ -651,4 +688,23 @@ func (t *tracer) gatherMetrics(ctx context.Context, cfg tracerConfig, m *Metrics
 		gathered <- struct{}{}
 	}()
 }
-*/
+
+// sendMetrics attempts to send metrics to the APM server. This must be
+// called after gatherMetrics has signalled that metrics have all been
+// gathered.
+func (t *Tracer) sendMetrics(logger Logger) {
+	/*
+		if len(s.metrics.metrics) == 0 {
+			return
+		}
+		for _, metrics := range s.metrics.metrics {
+			if err := s.stream.WriteMetrics(*metrics); err != nil {
+				if logger != nil {
+					logger.Debugf("failed to send metrics: %s", err)
+				}
+				s.stats.Errors.WriteMetrics++
+			}
+		}
+		s.metrics.reset()
+	*/
+}

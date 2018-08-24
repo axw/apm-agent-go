@@ -4,22 +4,20 @@ import (
 	"bytes"
 	"io"
 	"io/ioutil"
-
-	"github.com/elastic/apm-agent-go/internal/fastjson"
-	"github.com/elastic/apm-agent-go/model"
 )
 
+// buffer is a buffer of blocks. Each block is written and read discretely.
 type buffer struct {
 	buf   []byte
 	len   int
 	write int
 	read  int
-	json  fastjson.Writer
 }
 
 // newBuffer returns a new buffer with the given size in bytes.
 func newBuffer(size int) *buffer {
 	return &buffer{
+		// TODO(axw) grow to size as required? profile
 		buf: make([]byte, size),
 	}
 }
@@ -62,48 +60,25 @@ more:
 	return written + int64(n), err
 }
 
-// WriteTransaction writes tx to the buffer.
-func (b *buffer) WriteTransaction(tx model.Transaction) {
-	b.json.RawString(`{"transaction":`)
-	tx.MarshalFastJSON(&b.json)
-	b.json.RawByte('}')
-	b.commit()
-}
-
-// WriteError writes e to the stream.
-func (b *buffer) WriteError(e model.Error) {
-	b.json.RawString(`{"error":`)
-	e.MarshalFastJSON(&b.json)
-	b.json.RawByte('}')
-	b.commit()
-}
-
-// WriteMetrics writes m to the buffer.
-func (b *buffer) WriteMetrics(m model.Metrics) {
-	b.json.RawString(`{"metrics":`)
-	m.MarshalFastJSON(&b.json)
-	b.json.RawByte('}')
-	b.commit()
-}
-
-func (b *buffer) commit() {
+func (b *buffer) Write(p []byte) (int, error) {
 	// TODO(axw) use size header? profile
-	b.json.RawByte(0) // delimiter
-	bytes := b.json.Bytes()
-	if len(bytes) > b.Cap() {
+	lenp := len(p) + 1 // +1 for delimeter
+	if lenp > b.Cap() {
 		// Buffer is too small to hold the object, silently drop.
-		return
+		return 0, bytes.ErrTooLarge
 	}
-	for len(bytes) > b.Cap()-b.Len() {
+	for lenp > b.Cap()-b.Len() {
 		b.WriteTo(ioutil.Discard)
 	}
-	n := copy(b.buf[b.write:], bytes)
-	if n < len(bytes) {
+	n := copy(b.buf[b.write:], p)
+	if n < lenp-1 {
 		// Copy rest to beginning of buffer
-		b.write = copy(b.buf, bytes[n:])
+		b.write = copy(b.buf, p[n:])
 	} else {
 		b.write = (b.write + n) % b.Cap()
 	}
-	b.len += len(bytes)
-	b.json.Reset()
+	b.buf[b.write] = 0
+	b.write++
+	b.len += lenp
+	return lenp, nil
 }
