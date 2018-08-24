@@ -38,19 +38,18 @@ func init() {
 }
 
 type options struct {
-	requestDuration         time.Duration
-	metricsInterval         time.Duration
-	maxTransactionQueueSize int
-	maxSpans                int
-	sampler                 Sampler
-	sanitizedFieldNames     *regexp.Regexp
-	captureBody             CaptureBodyMode
-	spanFramesMinDuration   time.Duration
-	serviceName             string
-	serviceVersion          string
-	serviceEnvironment      string
-	active                  bool
-	distributedTracing      bool
+	requestDuration       time.Duration
+	metricsInterval       time.Duration
+	maxSpans              int
+	sampler               Sampler
+	sanitizedFieldNames   *regexp.Regexp
+	captureBody           CaptureBodyMode
+	spanFramesMinDuration time.Duration
+	serviceName           string
+	serviceVersion        string
+	serviceEnvironment    string
+	active                bool
+	distributedTracing    bool
 }
 
 func (opts *options) init(continueOnError bool) error {
@@ -72,11 +71,6 @@ func (opts *options) init(continueOnError bool) error {
 	if err != nil {
 		metricsInterval = defaultMetricsInterval
 		errs = append(errs, err)
-	}
-
-	maxTransactionQueueSize, err := initialMaxTransactionQueueSize()
-	if failed(err) {
-		maxTransactionQueueSize = defaultMaxTransactionQueueSize
 	}
 
 	maxSpans, err := initialMaxSpans()
@@ -123,7 +117,6 @@ func (opts *options) init(continueOnError bool) error {
 
 	opts.requestDuration = requestDuration
 	opts.metricsInterval = metricsInterval
-	opts.maxTransactionQueueSize = maxTransactionQueueSize
 	opts.maxSpans = maxSpans
 	opts.sampler = sampler
 	opts.sanitizedFieldNames = sanitizedFieldNames
@@ -249,7 +242,6 @@ func newTracer(opts options) *Tracer {
 	t.configCommands <- func(cfg *tracerConfig) {
 		cfg.metricsInterval = opts.metricsInterval
 		cfg.requestDuration = opts.requestDuration
-		cfg.maxTransactionQueueSize = opts.maxTransactionQueueSize
 		cfg.sanitizedFieldNames = opts.sanitizedFieldNames
 		cfg.preContext = defaultPreContext
 		cfg.postContext = defaultPostContext
@@ -305,15 +297,6 @@ func (t *Tracer) SetRequestDuration(d time.Duration) {
 func (t *Tracer) SetMetricsInterval(d time.Duration) {
 	t.sendConfigCommand(func(cfg *tracerConfig) {
 		cfg.metricsInterval = d
-	})
-}
-
-// SetMaxTransactionQueueSize sets the maximum transaction queue size -- the
-// maximum number of transactions to buffer before flushing to the APM server.
-// If set to a non-positive value, the queue size is unlimited.
-func (t *Tracer) SetMaxTransactionQueueSize(n int) {
-	t.sendConfigCommand(func(cfg *tracerConfig) {
-		cfg.maxTransactionQueueSize = n
 	})
 }
 
@@ -661,7 +644,6 @@ func (t *tracer) gatherMetrics(ctx context.Context, cfg tracerConfig, m *Metrics
 type tracerConfig struct {
 	requestDuration         time.Duration
 	metricsInterval         time.Duration
-	maxTransactionQueueSize int
 	logger                  Logger
 	metricsGatherers        []MetricsGatherer
 	contextSetter           stacktrace.ContextSetter

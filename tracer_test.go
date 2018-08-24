@@ -55,30 +55,7 @@ func TestTracerFlushInterval(t *testing.T) {
 }
 */
 
-func TestTracerMaxQueueSize(t *testing.T) {
-	tracer, err := elasticapm.NewTracer("tracer_testing", "")
-	assert.NoError(t, err)
-	defer tracer.Close()
-
-	// Prevent any transactions from being sent.
-	tracer.Transport = transporttest.ErrorTransport{Error: errors.New("nope")}
-
-	// Enqueue 10 transactions with a queue size of 5;
-	// we should see 5 transactons dropped.
-	tracer.SetMaxTransactionQueueSize(5)
-	for i := 0; i < 10; i++ {
-		tracer.StartTransaction("name", "type").End()
-	}
-	for tracer.Stats().TransactionsDropped < 5 {
-		time.Sleep(10 * time.Millisecond)
-	}
-	assert.Equal(t, elasticapm.TracerStats{
-		Errors: elasticapm.TracerStatsErrors{
-			SendStream: 1,
-		},
-		TransactionsDropped: 5,
-	}, tracer.Stats())
-}
+// TODO(axw) test request time, request size, buffer size
 
 func TestTracerMaxSpans(t *testing.T) {
 	tracer, r := transporttest.NewRecorderTracer()

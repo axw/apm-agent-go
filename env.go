@@ -18,7 +18,6 @@ import (
 
 const (
 	envMetricsInterval       = "ELASTIC_APM_METRICS_INTERVAL"
-	envMaxQueueSize          = "ELASTIC_APM_MAX_QUEUE_SIZE"
 	envMaxSpans              = "ELASTIC_APM_TRANSACTION_MAX_SPANS"
 	envTransactionSampleRate = "ELASTIC_APM_TRANSACTION_SAMPLE_RATE"
 	envSanitizeFieldNames    = "ELASTIC_APM_SANITIZE_FIELD_NAMES"
@@ -34,12 +33,12 @@ const (
 	envAPIRequestSize = "ELASTIC_APM_API_REQUEST_SIZE"
 	envAPIRequestTime = "ELASTIC_APM_API_REQUEST_TIME"
 
-	defaultAPIRequestTime          = 10 * time.Second
-	defaultMetricsInterval         = 0 // disabled by default
-	defaultMaxTransactionQueueSize = 500
-	defaultMaxSpans                = 500
-	defaultCaptureBody             = CaptureBodyOff
-	defaultSpanFramesMinDuration   = 5 * time.Millisecond
+	defaultAPIRequestSize        = 768 * 1024 // 768KiB/0.75MiB
+	defaultAPIRequestTime        = 10 * time.Second
+	defaultMetricsInterval       = 0 // disabled by default
+	defaultMaxSpans              = 500
+	defaultCaptureBody           = CaptureBodyOff
+	defaultSpanFramesMinDuration = 5 * time.Millisecond
 )
 
 var (
@@ -62,18 +61,6 @@ func initialRequestDuration() (time.Duration, error) {
 
 func initialMetricsInterval() (time.Duration, error) {
 	return apmconfig.ParseDurationEnv(envMetricsInterval, "s", defaultMetricsInterval)
-}
-
-func initialMaxTransactionQueueSize() (int, error) {
-	value := os.Getenv(envMaxQueueSize)
-	if value == "" {
-		return defaultMaxTransactionQueueSize, nil
-	}
-	size, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, errors.Wrapf(err, "failed to parse %s", envMaxQueueSize)
-	}
-	return size, nil
 }
 
 func initialMaxSpans() (int, error) {

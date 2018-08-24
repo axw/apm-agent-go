@@ -5,8 +5,9 @@ import (
 	"io"
 	"testing"
 
-	"github.com/elastic/apm-agent-go/model"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/elastic/apm-agent-go/model"
 )
 
 func TestBuffer(t *testing.T) {
@@ -29,5 +30,12 @@ func TestBuffer(t *testing.T) {
 		n, err = b.WriteTo(&bb)
 		assert.Zero(t, n)
 		assert.Equal(t, io.EOF, err)
+	}
+}
+
+func TestBufferEviction(t *testing.T) {
+	b := newBuffer(300)
+	for i := 0; i < 100; i++ {
+		b.WriteTransaction(model.Transaction{})
 	}
 }

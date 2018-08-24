@@ -3,6 +3,7 @@ package elasticapm
 import (
 	"bytes"
 	"io"
+	"io/ioutil"
 
 	"github.com/elastic/apm-agent-go/internal/fastjson"
 	"github.com/elastic/apm-agent-go/model"
@@ -86,17 +87,15 @@ func (b *buffer) WriteMetrics(m model.Metrics) {
 }
 
 func (b *buffer) commit() {
+	// TODO(axw) use size header? profile
 	b.json.RawByte(0) // delimiter
 	bytes := b.json.Bytes()
 	if len(bytes) > b.Cap() {
 		// Buffer is too small to hold the object, silently drop.
 		return
 	}
-	space := b.Cap() - b.Len()
-	if len(bytes) > space {
-		// TODO(axw) evacuate oldest entries (i.e. move read pointer
-		// along) such that we can fit the new entry.
-		panic("not enough space, evacuation not implemented")
+	for len(bytes) > b.Cap()-b.Len() {
+		b.WriteTo(ioutil.Discard)
 	}
 	n := copy(b.buf[b.write:], bytes)
 	if n < len(bytes) {

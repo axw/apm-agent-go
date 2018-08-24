@@ -47,12 +47,11 @@ func ExampleTracer() {
 	api.handleOrder(context.Background(), "fish fingers")
 	api.handleOrder(context.Background(), "detergent")
 
-	// The tracer will queue transactions to be sent at a later time,
-	// or when the queue becomes full. The interval and queue size
-	// can both be configured by setting the environment variables
-	// ELASTIC_APM_FLUSH_INTERVAL and ELASTIC_APM_MAX_QUEUE_SIZE
-	// respectively. Alternatively, the tracer's SetFlushInterval
-	// and SetMaxQueueSize methods can be used.
+	// The tracer will stream events to the APM server, and will
+	// close the request when it reaches a given size in bytes
+	// (ELASTIC_APM_API_REQUEST_SIZE) or a given duration has
+	// elapsed (ELASTIC_APM_API_REQUEST_TIME). Even so, we flush
+	// here to ensure the data reaches the server.
 	tracer.Flush(nil)
 
 	fmt.Println("number of payloads:", len(r.payloads))

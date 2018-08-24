@@ -20,26 +20,9 @@ import (
 	"github.com/elastic/apm-agent-go/transport/transporttest"
 )
 
-func TestTracerFlushIntervalEnv(t *testing.T) {
-	t.Run("suffix", func(t *testing.T) {
-		testTracerFlushIntervalEnv(t, "1s", time.Second)
-	})
-	t.Run("no_suffix", func(t *testing.T) {
-		testTracerFlushIntervalEnv(t, "1", time.Second)
-	})
-}
-
-func TestTracerFlushIntervalEnvInvalid(t *testing.T) {
-	os.Setenv("ELASTIC_APM_FLUSH_INTERVAL", "aeon")
-	defer os.Unsetenv("ELASTIC_APM_FLUSH_INTERVAL")
-
-	_, err := elasticapm.NewTracer("tracer_testing", "")
-	assert.EqualError(t, err, "failed to parse ELASTIC_APM_FLUSH_INTERVAL: time: invalid duration aeon")
-}
-
-func testTracerFlushIntervalEnv(t *testing.T, envValue string, expectedInterval time.Duration) {
-	os.Setenv("ELASTIC_APM_FLUSH_INTERVAL", envValue)
-	defer os.Unsetenv("ELASTIC_APM_FLUSH_INTERVAL")
+func TestTracerRequestTimeEnv(t *testing.T) {
+	os.Setenv("ELASTIC_APM_API_REQUEST_TIME", "1s")
+	defer os.Unsetenv("ELASTIC_APM_API_REQUEST_TIME")
 
 	tracer, err := elasticapm.NewTracer("tracer_testing", "")
 	require.NoError(t, err)
@@ -50,7 +33,22 @@ func testTracerFlushIntervalEnv(t *testing.T, envValue string, expectedInterval 
 	before := time.Now()
 	tracer.StartTransaction("name", "type").End()
 	io.Copy(ioutil.Discard, (<-streams).Stream) // wait for stream to be closed
-	assert.WithinDuration(t, before.Add(expectedInterval), time.Now(), 100*time.Millisecond)
+	assert.WithinDuration(t, before.Add(time.Second), time.Now(), 100*time.Millisecond)
+}
+
+func TestTracerRequestTimeEnvInvalid(t *testing.T) {
+	t.Run("invalid_duration", func(t *testing.T) {
+		os.Setenv("ELASTIC_APM_API_REQUEST_TIME", "aeon")
+		defer os.Unsetenv("ELASTIC_APM_API_REQUEST_TIME")
+		_, err := elasticapm.NewTracer("tracer_testing", "")
+		assert.EqualError(t, err, "failed to parse ELASTIC_APM_API_REQUEST_TIME: time: invalid duration aeon")
+	})
+	t.Run("missing_suffix", func(t *testing.T) {
+		os.Setenv("ELASTIC_APM_API_REQUEST_TIME", "1")
+		defer os.Unsetenv("ELASTIC_APM_API_REQUEST_TIME")
+		_, err := elasticapm.NewTracer("tracer_testing", "")
+		assert.EqualError(t, err, "failed to parse ELASTIC_APM_API_REQUEST_TIME: time: missing unit in duration 1")
+	})
 }
 
 func TestTracerTransactionRateEnv(t *testing.T) {
