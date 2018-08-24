@@ -68,12 +68,11 @@ func TestTracerMetricsBuiltin(t *testing.T) {
 		"system.process.memory.size",
 		"system.process.memory.rss.bytes",
 
+		"agent.send_errors",
 		"agent.transactions.sent",
 		"agent.transactions.dropped",
-		"agent.transactions.send_errors",
 		"agent.errors.sent",
 		"agent.errors.dropped",
-		"agent.errors.send_errors",
 	}
 	sort.Strings(expected)
 	for name := range builtinMetrics.Samples {
@@ -111,7 +110,6 @@ func TestTracerMetricsGatherer(t *testing.T) {
 	tracer.SendMetrics(nil)
 
 	payloads := transport.Payloads()
-	require.Len(t, payloads, 3)
 	metrics1 := payloads.Metrics[1]
 	metrics2 := payloads.Metrics[2]
 
@@ -143,7 +141,7 @@ func TestTracerMetricsDeregister(t *testing.T) {
 	tracer.SendMetrics(nil)
 
 	payloads := transport.Payloads()
-	metrics := payloads.Metrics[0]
+	metrics := payloads.Metrics
 	require.Len(t, metrics, 1) // just the builtin/unlabeled metrics
 }
 

@@ -480,18 +480,14 @@ func (t *Tracer) loop() {
 		<-requestTimer.C
 	}
 
-	//var forceFlushed chan<- struct{}
-	//var forceSentMetrics chan<- struct{}
-	//var gatherMetricsC <-chan time.Time
-	//var gatheringMetrics bool
-	//forceSendMetrics := t.forceSendMetrics
-	//gatheredMetrics := make(chan struct{}, 1)
+	var metrics Metrics
+	var sentMetrics chan<- struct{}
+	var gatheringMetrics bool
+	gatheredMetrics := make(chan struct{}, 1)
 	metricsTimer := time.NewTimer(0)
+	metricsTimerActive := false
 	if !metricsTimer.Stop() {
 		<-metricsTimer.C
-	}
-	startMetricsTimer := func() {
-		//startTimer(&gatherMetricsC, metricsTimer, cfg.metricsInterval)
 	}
 
 	var stats TracerStats
@@ -502,12 +498,17 @@ func (t *Tracer) loop() {
 		stats:  &stats,
 	}
 	for {
+		var gatherMetrics bool
 		select {
 		case <-t.closing:
 			return
 		case cmd := <-t.configCommands:
+			oldMetricsInterval := cfg.metricsInterval
 			cmd(&cfg)
-			startMetricsTimer()
+			if !gatheringMetrics && oldMetricsInterval <= 0 && cfg.metricsInterval > 0 {
+				metricsTimer.Reset(cfg.metricsInterval)
+				metricsTimerActive = true
+			}
 			continue
 		case tx := <-t.transactions:
 			modelWriter.writeTransaction(tx)
@@ -517,6 +518,25 @@ func (t *Tracer) loop() {
 			flushRequest = true
 		case <-requestTimer.C:
 			closeRequest = true
+		case <-metricsTimer.C:
+			metricsTimerActive = false
+			gatherMetrics = !gatheringMetrics
+		case sentMetrics = <-t.forceSendMetrics:
+			if metricsTimerActive {
+				if !metricsTimer.Stop() {
+					<-metricsTimer.C
+				}
+				metricsTimerActive = false
+			}
+			gatherMetrics = !gatheringMetrics
+		case <-gatheredMetrics:
+			modelWriter.writeMetrics(&metrics)
+			gatheringMetrics = false
+			closeRequest = true
+			if cfg.metricsInterval > 0 {
+				metricsTimerActive = true
+				metricsTimer.Reset(cfg.metricsInterval)
+			}
 		case flushed = <-t.forceFlush:
 			// Drain any objects buffered in the channels.
 			for n := len(t.errors); n > 0; n-- {
@@ -525,10 +545,15 @@ func (t *Tracer) loop() {
 			for n := len(t.transactions); n > 0; n-- {
 				modelWriter.writeTransaction(<-t.transactions)
 			}
+			if !requestActive && buffer.Len() == 0 {
+				flushed <- struct{}{}
+				continue
+			}
 			closeRequest = true
 		case req = <-iochanReader.C:
 		case err := <-requestResult:
 			if err != nil {
+				stats.Errors.SendStream++
 				gracePeriod = nextGracePeriod(gracePeriod)
 				if cfg.logger != nil {
 					cfg.logger.Debugf("request failed (next request in %s): %s", err, gracePeriod)
@@ -536,6 +561,10 @@ func (t *Tracer) loop() {
 			} else {
 				// Reset grace period after success.
 				gracePeriod = -1
+			}
+			if sentMetrics != nil {
+				sentMetrics <- struct{}{}
+				sentMetrics = nil
 			}
 			if flushed != nil {
 				flushed <- struct{}{}
@@ -551,21 +580,17 @@ func (t *Tracer) loop() {
 			}
 		}
 
-		/*
-			case <-gatherMetricsC:
-				gatherMetricsC = nil
-				gatherMetrics = !gatheringMetrics
-			case forceSentMetrics = <-forceSendMetrics:
-				// forceSentMetrics will be signaled, and forceSendMetrics
-				// set back to t.forceSendMetrics, when metrics have been
-				// gathered and an attempt to send them has been made.
-				forceSendMetrics = nil
-				gatherMetricsC = nil
-				gatherMetrics = !gatheringMetrics
-			case <-gatheredMetrics:
-				gatheringMetrics = false
-				sendMetrics = true
-		*/
+		if !stats.isZero() {
+			t.statsMu.Lock()
+			t.stats.accumulate(stats)
+			t.statsMu.Unlock()
+			stats = TracerStats{}
+		}
+
+		if gatherMetrics {
+			gatheringMetrics = true
+			t.gatherMetrics(ctx, cfg.metricsGatherers, &metrics, cfg.logger, gatheredMetrics)
+		}
 
 		// TODO(axw) make the goroutine below long-running, and send
 		// requests to start new requests?
@@ -620,33 +645,6 @@ func (t *Tracer) loop() {
 				requestBytesRead += n
 			}
 		}
-
-		/*
-			if gatherMetrics {
-				gatheringMetrics = true
-				t.gatherMetrics(ctx, cfg.metricsGatherers, &metrics, cfg.logger, gatheredMetrics)
-			}
-			if sendMetrics {
-				sender.sendMetrics()
-				// We don't retry sending metrics on failure;
-				// inform the caller that an attempt was made
-				// regardless of the outcome, and restart the
-				// timer.
-				if forceSentMetrics != nil {
-					forceSentMetrics <- struct{}{}
-					forceSentMetrics = nil
-					forceSendMetrics = t.forceSendMetrics
-				}
-				startMetricsTimer()
-			}
-		*/
-
-		if !stats.isZero() {
-			t.statsMu.Lock()
-			t.stats.accumulate(stats)
-			t.statsMu.Unlock()
-			stats = TracerStats{}
-		}
 	}
 }
 
@@ -663,7 +661,7 @@ func (t *Tracer) jsonRequestMetadata() []byte {
 	t.process.MarshalFastJSON(&json)
 	json.RawString(`,"service":`)
 	service.MarshalFastJSON(&json)
-	json.RawString(`}}`)
+	json.RawString("}}\n")
 	return json.Bytes()
 }
 
@@ -687,24 +685,4 @@ func (t *Tracer) gatherMetrics(ctx context.Context, gatherers []MetricsGatherer,
 		}
 		gathered <- struct{}{}
 	}()
-}
-
-// sendMetrics attempts to send metrics to the APM server. This must be
-// called after gatherMetrics has signalled that metrics have all been
-// gathered.
-func (t *Tracer) sendMetrics(logger Logger) {
-	/*
-		if len(s.metrics.metrics) == 0 {
-			return
-		}
-		for _, metrics := range s.metrics.metrics {
-			if err := s.stream.WriteMetrics(*metrics); err != nil {
-				if logger != nil {
-					logger.Debugf("failed to send metrics: %s", err)
-				}
-				s.stats.Errors.WriteMetrics++
-			}
-		}
-		s.metrics.reset()
-	*/
 }

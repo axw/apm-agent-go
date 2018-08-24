@@ -55,6 +55,13 @@ func TestTracerFlushInterval(t *testing.T) {
 }
 */
 
+func TestTracerFlushEmpty(t *testing.T) {
+	tracer, err := elasticapm.NewTracer("tracer_testing", "")
+	assert.NoError(t, err)
+	defer tracer.Close()
+	tracer.Flush(nil)
+}
+
 // TODO(axw) test request time, request size, buffer size
 
 func TestTracerMaxSpans(t *testing.T) {
@@ -162,7 +169,6 @@ func TestTracerRecover(t *testing.T) {
 	tracer.Flush(nil)
 
 	payloads := r.Payloads()
-	assert.Len(t, payloads, 2)
 	error0 := payloads.Errors[0]
 	transaction := payloads.Transactions[0]
 	assert.Equal(t, "blam", error0.Exception.Message)

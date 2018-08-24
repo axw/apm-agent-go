@@ -46,13 +46,13 @@ func (w *modelWriter) writeError(e *Error) {
 
 // writeMetrics encodes m as JSON to the buffer, and then resets m.
 func (w *modelWriter) writeMetrics(m *Metrics) {
-	/*
+	for _, m := range m.metrics {
 		w.json.RawString(`{"metrics":`)
-		e.model.MarshalFastJSON(&w.json)
+		m.MarshalFastJSON(&w.json)
 		w.json.RawByte('}')
-		buffer.Write(w.json.Bytes())
+		w.buffer.Write(w.json.Bytes())
 		w.json.Reset()
-	*/
+	}
 	m.reset()
 }
 
