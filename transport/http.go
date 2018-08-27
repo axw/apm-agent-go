@@ -78,21 +78,20 @@ func NewHTTPTransport(serverURL, secretToken string) (*HTTPTransport, error) {
 		return nil, err
 	}
 
-	client := &http.Client{}
+	httpTransport := &http.Transport{
+		Proxy:                 defaultHTTPTransport.Proxy,
+		DialContext:           defaultHTTPTransport.DialContext,
+		MaxIdleConns:          defaultHTTPTransport.MaxIdleConns,
+		IdleConnTimeout:       defaultHTTPTransport.IdleConnTimeout,
+		TLSHandshakeTimeout:   defaultHTTPTransport.TLSHandshakeTimeout,
+		ExpectContinueTimeout: defaultHTTPTransport.ExpectContinueTimeout,
+	}
 	if req.URL.Scheme == "https" && os.Getenv(envVerifyServerCert) == "false" {
-		tlsConfig := &tls.Config{
+		httpTransport.TLSClientConfig = &tls.Config{
 			InsecureSkipVerify: true,
 		}
-		client.Transport = &http.Transport{
-			Proxy:                 defaultHTTPTransport.Proxy,
-			DialContext:           defaultHTTPTransport.DialContext,
-			MaxIdleConns:          defaultHTTPTransport.MaxIdleConns,
-			IdleConnTimeout:       defaultHTTPTransport.IdleConnTimeout,
-			TLSHandshakeTimeout:   defaultHTTPTransport.TLSHandshakeTimeout,
-			ExpectContinueTimeout: defaultHTTPTransport.ExpectContinueTimeout,
-			TLSClientConfig:       tlsConfig,
-		}
 	}
+	client := &http.Client{Transport: httpTransport}
 
 	// TODO(axw) need to redefine meaning of the timeout
 	// for streaming. Should be an idle timeout?

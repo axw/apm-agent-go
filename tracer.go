@@ -476,6 +476,7 @@ func (t *Tracer) loop() {
 	flushRequest := false
 	requestResult := make(chan error, 1)
 	requestTimer := time.NewTimer(0)
+	requestTimerActive := false
 	if !requestTimer.Stop() {
 		<-requestTimer.C
 	}
@@ -517,6 +518,7 @@ func (t *Tracer) loop() {
 			modelWriter.writeError(e)
 			flushRequest = true
 		case <-requestTimer.C:
+			requestTimerActive = false
 			closeRequest = true
 		case <-metricsTimer.C:
 			metricsTimerActive = false
@@ -556,7 +558,7 @@ func (t *Tracer) loop() {
 				stats.Errors.SendStream++
 				gracePeriod = nextGracePeriod(gracePeriod)
 				if cfg.logger != nil {
-					cfg.logger.Debugf("request failed (next request in %s): %s", err, gracePeriod)
+					cfg.logger.Debugf("request failed: %s (next request in %s)", err, gracePeriod)
 				}
 			} else {
 				// Reset grace period after success.
@@ -571,7 +573,6 @@ func (t *Tracer) loop() {
 				flushed = nil
 			}
 			if req.Buf != nil {
-				// TODO(axw) test early close
 				req.Respond(0, io.EOF)
 				req.Buf = nil
 			}
@@ -580,8 +581,11 @@ func (t *Tracer) loop() {
 			requestActive = false
 			requestBytesRead = 0
 			requestBuf.Reset()
-			if !requestTimer.Stop() {
-				<-requestTimer.C
+			if requestTimerActive {
+				if !requestTimer.Stop() {
+					<-requestTimer.C
+				}
+				requestTimerActive = false
 			}
 		}
 
@@ -599,7 +603,7 @@ func (t *Tracer) loop() {
 
 		// TODO(axw) make the goroutine below long-running, and send
 		// requests to start new requests?
-		if !requestActive && (buffer.Len() > 0 || requestBuf.Len() > 0) {
+		if !requestActive && buffer.Len() > 0 {
 			go func() {
 				if gracePeriod > 0 {
 					select {
@@ -618,6 +622,7 @@ func (t *Tracer) loop() {
 			zlibClosed = false
 			requestActive = true
 			requestTimer.Reset(cfg.requestDuration)
+			requestTimerActive = true
 		}
 
 		if requestActive && (!closeRequest || !zlibClosed) {
