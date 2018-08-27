@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,10 +24,7 @@ func TestInitDefault(t *testing.T) {
 	assert.NotNil(t, tr)
 	assert.Exactly(t, tr, transport.Default)
 
-	stream := transport.NewStream()
-	go stream.Close()
-
-	err = tr.SendStream(context.Background(), stream)
+	err = tr.SendStream(context.Background(), strings.NewReader("request-body"))
 	assert.NoError(t, err)
 	assert.Len(t, h.requests, 1)
 }
@@ -51,10 +49,7 @@ func TestInitDefaultDiscard(t *testing.T) {
 	assert.NotNil(t, tr)
 	assert.Exactly(t, tr, transport.Default)
 
-	stream := transport.NewStream()
-	go stream.Close()
-
-	err = tr.SendStream(context.Background(), stream)
+	err = tr.SendStream(context.Background(), strings.NewReader("request-body"))
 	assert.NoError(t, err)
 	assert.Len(t, h.requests, 1)
 }
@@ -67,9 +62,6 @@ func TestInitDefaultError(t *testing.T) {
 	assert.NotNil(t, tr)
 	assert.Exactly(t, tr, transport.Default)
 
-	stream := transport.NewStream()
-	go stream.Close()
-
-	sendErr := tr.SendStream(context.Background(), stream)
+	sendErr := tr.SendStream(context.Background(), strings.NewReader("request-body"))
 	assert.Exactly(t, initErr, sendErr)
 }

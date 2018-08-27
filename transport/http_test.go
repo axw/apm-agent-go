@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,7 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/elastic/apm-agent-go/model"
 	"github.com/elastic/apm-agent-go/transport"
 )
 
@@ -44,7 +44,7 @@ func TestNewHTTPTransportDefaultURL(t *testing.T) {
 
 	transport, err := transport.NewHTTPTransport("", "")
 	assert.NoError(t, err)
-	err = transport.SendStream(context.Background(), emptyStream())
+	err = transport.SendStream(context.Background(), strings.NewReader(""))
 	assert.NoError(t, err)
 	assert.Len(t, h.requests, 1)
 }
@@ -57,12 +57,12 @@ func TestHTTPTransportUserAgent(t *testing.T) {
 
 	transport, err := transport.NewHTTPTransport("", "")
 	assert.NoError(t, err)
-	err = transport.SendStream(context.Background(), emptyStream())
+	err = transport.SendStream(context.Background(), strings.NewReader(""))
 	assert.NoError(t, err)
 	assert.Len(t, h.requests, 1)
 
 	transport.SetUserAgent("foo")
-	err = transport.SendStream(context.Background(), emptyStream())
+	err = transport.SendStream(context.Background(), strings.NewReader(""))
 	assert.NoError(t, err)
 	assert.Len(t, h.requests, 2)
 
@@ -77,7 +77,7 @@ func TestHTTPTransportSecretToken(t *testing.T) {
 
 	transport, err := transport.NewHTTPTransport(server.URL, "hunter2")
 	assert.NoError(t, err)
-	transport.SendStream(context.Background(), emptyStream())
+	transport.SendStream(context.Background(), strings.NewReader(""))
 
 	assert.Len(t, h.requests, 1)
 	assertAuthorization(t, h.requests[0], "hunter2")
@@ -91,7 +91,7 @@ func TestHTTPTransportEnvSecretToken(t *testing.T) {
 
 	transport, err := transport.NewHTTPTransport(server.URL, "")
 	assert.NoError(t, err)
-	transport.SendStream(context.Background(), emptyStream())
+	transport.SendStream(context.Background(), strings.NewReader(""))
 
 	assert.Len(t, h.requests, 1)
 	assertAuthorization(t, h.requests[0], "hunter2")
@@ -102,7 +102,7 @@ func TestHTTPTransportNoSecretToken(t *testing.T) {
 	transport, server := newHTTPTransport(t, &h)
 	defer server.Close()
 
-	transport.SendStream(context.Background(), emptyStream())
+	transport.SendStream(context.Background(), strings.NewReader(""))
 
 	assert.Len(t, h.requests, 1)
 	assertAuthorization(t, h.requests[0], "")
@@ -118,7 +118,7 @@ func TestHTTPTransportTLS(t *testing.T) {
 	transport, err := transport.NewHTTPTransport(server.URL, "")
 	assert.NoError(t, err)
 
-	p := emptyStream()
+	p := strings.NewReader("")
 
 	// Send should fail, because we haven't told the client
 	// about the CA certificate, nor configured it to disable
@@ -158,7 +158,7 @@ func TestHTTPTransportEnvVerifyServerCert(t *testing.T) {
 	assert.NotNil(t, httpTransport.TLSClientConfig)
 	assert.True(t, httpTransport.TLSClientConfig.InsecureSkipVerify)
 
-	err = transport.SendStream(context.Background(), emptyStream())
+	err = transport.SendStream(context.Background(), strings.NewReader(""))
 	assert.NoError(t, err)
 }
 
@@ -169,7 +169,7 @@ func TestHTTPError(t *testing.T) {
 	tr, server := newHTTPTransport(t, h)
 	defer server.Close()
 
-	err := tr.SendStream(context.Background(), emptyStream())
+	err := tr.SendStream(context.Background(), strings.NewReader(""))
 	assert.EqualError(t, err, "request failed with 500 Internal Server Error: error-message")
 }
 
@@ -178,17 +178,9 @@ func TestHTTPTransportContent(t *testing.T) {
 	server := httptest.NewServer(&h)
 	defer server.Close()
 
-	stream := transport.NewStream()
-	go func() {
-		for i := 0; i < 1024; i++ {
-			stream.WriteTransaction(model.Transaction{})
-		}
-		stream.Close()
-	}()
-
 	transport, err := transport.NewHTTPTransport(server.URL, "")
 	assert.NoError(t, err)
-	transport.SendStream(context.Background(), stream)
+	transport.SendStream(context.Background(), strings.NewReader("request-body"))
 
 	require.Len(t, h.requests, 1)
 	assert.Equal(t, "deflate", h.requests[0].Header.Get("Content-Encoding"))
@@ -206,7 +198,7 @@ func TestHTTPTransportServerTimeout(t *testing.T) {
 	before := time.Now()
 	transport, err := transport.NewHTTPTransport(server.URL, "")
 	assert.NoError(t, err)
-	err = transport.SendStream(context.Background(), emptyStream())
+	err = transport.SendStream(context.Background(), strings.NewReader(""))
 	taken := time.Since(before)
 	assert.Error(t, err)
 	err = errors.Cause(err)
@@ -225,10 +217,4 @@ func newHTTPTransport(t *testing.T, handler http.Handler) (*transport.HTTPTransp
 		t.FailNow()
 	}
 	return transport, server
-}
-
-func emptyStream() *transport.Stream {
-	stream := transport.NewStream()
-	go stream.Close()
-	return stream
 }

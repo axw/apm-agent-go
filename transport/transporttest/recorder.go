@@ -40,13 +40,15 @@ func (r *RecorderTransport) SendStream(ctx context.Context, stream io.Reader) er
 	return r.record(stream)
 }
 
+// Metadata returns the metadata recorded by the transport. If metadata is yet to
+// be received, this method will panic.
 func (r *RecorderTransport) Metadata() (model.System, model.Process, model.Service) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.metadata.System, r.metadata.Process, r.metadata.Service
 }
 
-// Payloads returns the payloads recorded by SendStream. Each element of Payloads
-// is a deep copy of a model.Transaction, model.Error, or model.Metrics, produced
-// by decoding the stream.
+// Payloads returns the payloads recorded by SendStream.
 func (r *RecorderTransport) Payloads() Payloads {
 	r.mu.Lock()
 	defer r.mu.Unlock()

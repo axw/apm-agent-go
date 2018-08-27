@@ -17,11 +17,10 @@ type ErrorTransport struct {
 	Error error
 }
 
-// SendTransactions discards the stream and returns t.Error.
-func (t ErrorTransport) SendStream(_ context.Context, r io.Reader) error {
+// SendStream discards the stream and returns t.Error.
+func (t ErrorTransport) SendStream(context.Context, io.Reader) error {
 	if t.Error != nil {
 		return t.Error
 	}
-	//io.Copy(ioutil.Discard, s)
 	return nil
 }

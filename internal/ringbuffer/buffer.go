@@ -11,7 +11,7 @@ import (
 // written to the buffer for block accounting.
 const BlockOverhead = 4
 
-// buffer is a buffer of blocks. Each block is written and read discretely.
+// Buffer is a ring buffer of byte blocks.
 type Buffer struct {
 	buf     []byte
 	sizebuf [4]byte

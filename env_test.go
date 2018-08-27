@@ -17,6 +17,7 @@ import (
 	"github.com/elastic/apm-agent-go"
 	"github.com/elastic/apm-agent-go/model"
 	"github.com/elastic/apm-agent-go/module/apmhttp"
+	"github.com/elastic/apm-agent-go/transport"
 	"github.com/elastic/apm-agent-go/transport/transporttest"
 )
 
@@ -24,16 +25,30 @@ func TestTracerRequestTimeEnv(t *testing.T) {
 	os.Setenv("ELASTIC_APM_API_REQUEST_TIME", "1s")
 	defer os.Unsetenv("ELASTIC_APM_API_REQUEST_TIME")
 
+	requestHandled := make(chan struct{}, 1)
+	var serverStart, serverEnd time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		serverStart = time.Now()
+		io.Copy(ioutil.Discard, req.Body)
+		serverEnd = time.Now()
+		requestHandled <- struct{}{}
+	}))
+	defer server.Close()
+
 	tracer, err := elasticapm.NewTracer("tracer_testing", "")
 	require.NoError(t, err)
 	defer tracer.Close()
-	streams := make(chan transporttest.SendStreamRequest)
-	tracer.Transport = &transporttest.ChannelTransport{Streams: streams}
+	httpTransport, err := transport.NewHTTPTransport(server.URL, "")
+	require.NoError(t, err)
+	tracer.Transport = httpTransport
 
-	before := time.Now()
+	clientStart := time.Now()
 	tracer.StartTransaction("name", "type").End()
-	io.Copy(ioutil.Discard, (<-streams).Stream) // wait for stream to be closed
-	assert.WithinDuration(t, before.Add(time.Second), time.Now(), 100*time.Millisecond)
+	<-requestHandled
+	clientEnd := time.Now()
+	assert.WithinDuration(t, clientStart.Add(time.Second), clientEnd, 100*time.Millisecond)
+	assert.WithinDuration(t, clientStart, serverStart, 100*time.Millisecond)
+	assert.WithinDuration(t, clientEnd, serverEnd, 100*time.Millisecond)
 }
 
 func TestTracerRequestTimeEnvInvalid(t *testing.T) {

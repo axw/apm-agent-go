@@ -37,24 +37,6 @@ func TestTracerClosedSendNonblocking(t *testing.T) {
 	assert.Equal(t, uint64(1), tracer.Stats().TransactionsDropped)
 }
 
-/*
-func TestTracerFlushInterval(t *testing.T) {
-	tracer, err := elasticapm.NewTracer("tracer_testing", "")
-	assert.NoError(t, err)
-	defer tracer.Close()
-	streams := make(chan transporttest.SendStreamRequest)
-	tracer.Transport = &transporttest.ChannelTransport{Streams: streams}
-
-	interval := time.Second
-	tracer.SetFlushInterval(interval)
-
-	before := time.Now()
-	tracer.StartTransaction("name", "type").End()
-	io.Copy(ioutil.Discard, (<-streams).Stream) // wait for stream to be closed
-	assert.WithinDuration(t, before.Add(interval), time.Now(), 100*time.Millisecond)
-}
-*/
-
 func TestTracerFlushEmpty(t *testing.T) {
 	tracer, err := elasticapm.NewTracer("tracer_testing", "")
 	assert.NoError(t, err)
@@ -62,7 +44,7 @@ func TestTracerFlushEmpty(t *testing.T) {
 	tracer.Flush(nil)
 }
 
-// TODO(axw) test request time, request size, buffer size
+// TODO(axw) test request size, buffer size
 
 func TestTracerMaxSpans(t *testing.T) {
 	tracer, r := transporttest.NewRecorderTracer()
@@ -106,60 +88,6 @@ func TestTracerErrors(t *testing.T) {
 	assert.NotEmpty(t, stacktrace)
 	assert.Equal(t, "TestTracerErrors", stacktrace[0].Function)
 }
-
-/*
-func TestTracerErrorsBuffered(t *testing.T) {
-	tracer, err := elasticapm.NewTracer("tracer_testing", "")
-	assert.NoError(t, err)
-	defer tracer.Close()
-	errors := make(chan transporttest.SendErrorsRequest)
-	tracer.Transport = &transporttest.ChannelTransport{Errors: errors}
-
-	tracer.SetMaxErrorQueueSize(10)
-	sendError := func(msg string) {
-		e := tracer.NewError(fmt.Errorf("%s", msg))
-		e.Send()
-	}
-
-	// Send an initial error, which should send a request
-	// on the transport's errors channel.
-	sendError("0")
-	var req transporttest.SendErrorsRequest
-	select {
-	case req = <-errors:
-	case <-time.After(10 * time.Second):
-		t.Fatalf("timed out waiting for errors payload")
-	}
-	assert.Len(t, req.Payload.Errors, 1)
-
-	// While we're still sending the first error, try to
-	// enqueue another 1010. The first 1000 should be
-	// buffered in the channel, but the internal queue
-	// will not be filled until the send has completed,
-	// so the additional 10 will be dropped.
-	for i := 1; i <= 1010; i++ {
-		sendError(fmt.Sprint(i))
-	}
-	req.Result <- fmt.Errorf("nope")
-
-	stats := tracer.Stats()
-	assert.Equal(t, stats.ErrorsDropped, uint64(10))
-
-	// The tracer should send 100 lots of 10 errors.
-	for i := 0; i < 100; i++ {
-		select {
-		case req = <-errors:
-		case <-time.After(10 * time.Second):
-			t.Fatalf("timed out waiting for errors payload")
-		}
-		assert.Len(t, req.Payload.Errors, 10)
-		for j, e := range req.Payload.Errors {
-			assert.Equal(t, e.Exception.Message, fmt.Sprintf("%d", i*10+j))
-		}
-		req.Result <- nil
-	}
-}
-*/
 
 func TestTracerRecover(t *testing.T) {
 	tracer, r := transporttest.NewRecorderTracer()
