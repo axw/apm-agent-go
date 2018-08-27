@@ -570,7 +570,11 @@ func (t *Tracer) loop() {
 				flushed <- struct{}{}
 				flushed = nil
 			}
-			req.Buf = nil
+			if req.Buf != nil {
+				// TODO(axw) test early close
+				req.Respond(0, io.EOF)
+				req.Buf = nil
+			}
 			flushRequest = false
 			closeRequest = false
 			requestActive = false
