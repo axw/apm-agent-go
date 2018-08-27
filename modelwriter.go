@@ -115,6 +115,12 @@ func (w *modelWriter) buildModelSpan(out *model.Span, span *Span) {
 
 func (w *modelWriter) buildModelError(e *Error) {
 	// TODO(axw) move the model type outside of Error
+	if !e.Parent.Span.isZero() {
+		e.model.TraceID = model.TraceID(e.Parent.Trace)
+		e.model.ParentID = model.SpanID(e.Parent.Span)
+	} else {
+		e.model.Transaction.ID = model.UUID(e.Parent.Trace)
+	}
 	w.setStacktraceContext(e.modelStacktrace)
 	e.setStacktrace()
 	e.setCulprit()

@@ -466,7 +466,7 @@ func (t *Tracer) loop() {
 	var metadata []byte
 	var gracePeriod time.Duration = -1
 	var flushed chan<- struct{}
-	zlibWriter := zlib.NewWriter(&requestBuf)
+	var zlibWriter zlib.Writer
 	zlibFlushed := true
 	zlibClosed := false
 	iochanReader := iochan.NewReader()
@@ -570,6 +570,7 @@ func (t *Tracer) loop() {
 				flushed <- struct{}{}
 				flushed = nil
 			}
+			req.Buf = nil
 			flushRequest = false
 			closeRequest = false
 			requestActive = false
@@ -607,15 +608,17 @@ func (t *Tracer) loop() {
 			if metadata == nil {
 				metadata = t.jsonRequestMetadata()
 			}
+			zlibWriter.Reset(&requestBuf)
 			zlibWriter.Write(metadata)
 			zlibFlushed = false
+			zlibClosed = false
 			requestActive = true
 			requestTimer.Reset(cfg.requestDuration)
 		}
 
 		if requestActive && (!closeRequest || !zlibClosed) {
 			for requestBytesRead+requestBuf.Len() < requestSize && buffer.Len() > 0 {
-				buffer.WriteTo(zlibWriter)
+				buffer.WriteTo(&zlibWriter)
 				zlibWriter.Write([]byte("\n"))
 				zlibFlushed = false
 			}
@@ -636,7 +639,7 @@ func (t *Tracer) loop() {
 
 		if req.Buf != nil && (requestBuf.Len() > 0 || closeRequest) {
 			n, err := requestBuf.Read(req.Buf)
-			if closeRequest && err == nil && n <= len(req.Buf) {
+			if closeRequest && err == nil && requestBuf.Len() == 0 {
 				err = io.EOF
 			}
 			req.Respond(n, err)

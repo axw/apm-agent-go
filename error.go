@@ -45,14 +45,7 @@ func (t *Tracer) Recovered(v interface{}, tx *Transaction) *Error {
 	default:
 		e = t.NewError(fmt.Errorf("%v", v))
 	}
-	if tx != nil {
-		if !tx.traceContext.Span.isZero() {
-			e.model.TraceID = model.TraceID(tx.traceContext.Trace)
-			e.model.ParentID = model.SpanID(tx.traceContext.Span)
-		} else {
-			e.model.Transaction.ID = model.UUID(tx.traceContext.Trace)
-		}
-	}
+	e.Parent = tx.traceContext
 	return e
 }
 
@@ -166,6 +159,10 @@ type Error struct {
 	// only applies to "exception" errors (errors created with
 	// NewError, or Recovered), and is ignored by "log" errors.
 	Handled bool
+
+	// Parent holds the TraceContext of the error's parent span
+	// or transaction.
+	Parent TraceContext
 
 	// Context holds the context for this error.
 	Context Context
