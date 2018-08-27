@@ -481,6 +481,22 @@ func (t *Tracer) loop() {
 		<-requestTimer.C
 	}
 
+	// Run another goroutine to perform the blocking requests,
+	// communicating with the tracer loop to obtain stream data.
+	sendStreamRequest := make(chan time.Duration)
+	defer close(sendStreamRequest)
+	go func() {
+		for gracePeriod := range sendStreamRequest {
+			if gracePeriod > 0 {
+				select {
+				case <-time.After(gracePeriod):
+				case <-ctx.Done():
+				}
+			}
+			requestResult <- t.Transport.SendStream(ctx, iochanReader)
+		}
+	}()
+
 	var metrics Metrics
 	var sentMetrics chan<- struct{}
 	var gatheringMetrics bool
@@ -502,6 +518,10 @@ func (t *Tracer) loop() {
 		var gatherMetrics bool
 		select {
 		case <-t.closing:
+			if req.Buf != nil {
+				// Unblock the reader first.
+				req.Respond(0, io.EOF)
+			}
 			return
 		case cmd := <-t.configCommands:
 			oldMetricsInterval := cfg.metricsInterval
@@ -601,18 +621,8 @@ func (t *Tracer) loop() {
 			t.gatherMetrics(ctx, cfg.metricsGatherers, &metrics, cfg.logger, gatheredMetrics)
 		}
 
-		// TODO(axw) make the goroutine below long-running, and send
-		// requests to start new requests?
 		if !requestActive && buffer.Len() > 0 {
-			go func() {
-				if gracePeriod > 0 {
-					select {
-					case <-time.After(gracePeriod):
-					case <-ctx.Done():
-					}
-				}
-				requestResult <- t.Transport.SendStream(ctx, iochanReader)
-			}()
+			sendStreamRequest <- gracePeriod
 			if metadata == nil {
 				metadata = t.jsonRequestMetadata()
 			}
