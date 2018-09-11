@@ -1,6 +1,7 @@
 package apmot
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/textproto"
@@ -28,6 +29,42 @@ func New(opts ...Option) opentracing.Tracer {
 // otTracer is an opentracing.Tracer backed by an elasticapm.Tracer.
 type otTracer struct {
 	tracer *elasticapm.Tracer
+}
+
+func (t *otTracer) StartSpanFromContext(
+	ctx context.Context,
+	operationName string,
+	opts ...opentracing.StartSpanOption,
+) (opentracing.Span, context.Context) {
+	apmParentSpan := elasticapm.SpanFromContext(ctx)
+	parentSpan := opentracing.SpanFromContext(ctx)
+	if parentSpan != nil && parentSpan.(*otSpan).span == apmParentSpan { // XXX panic
+		opts = append(opts, opentracing.ChildOf(parentSpan.Context()))
+	} else if tx := elasticapm.TransactionFromContext(ctx); tx != nil {
+		txTraceContext := tx.TraceContext()
+		apmParentSpan := elasticapm.SpanFromContext(ctx)
+		parentContext := spanContext{
+			tracer:        t,
+			transactionID: txTraceContext.Span,
+			tx:            tx,
+		}
+		parentContext.txSpanContext = &parentContext
+		if apmParentSpan != nil {
+			parentContext.traceContext = apmParentSpan.TraceContext()
+		} else {
+			parentContext.traceContext = txTraceContext
+		}
+		opts = append(opts, opentracing.ChildOf(&parentContext))
+	}
+	span := t.StartSpan(operationName, opts...)
+	ctx = opentracing.ContextWithSpan(ctx, span)
+	otSpan := span.(*otSpan)
+	if otSpan.span != nil {
+		ctx = elasticapm.ContextWithSpan(ctx, otSpan.span)
+	} else {
+		ctx = elasticapm.ContextWithTransaction(ctx, otSpan.ctx.tx)
+	}
+	return span, ctx
 }
 
 // StartSpan starts a new OpenTracing span with the given name and zero or more options.
