@@ -23,6 +23,10 @@ type otSpan struct {
 	ctx  spanContext
 }
 
+func (s *otSpan) Span() *elasticapm.Span {
+	return s.span
+}
+
 // SetOperationName sets or changes the operation name.
 func (s *otSpan) SetOperationName(operationName string) opentracing.Span {
 	if s.span != nil {
