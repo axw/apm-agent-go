@@ -3,53 +3,35 @@ package elasticapm
 import (
 	"context"
 
-	"github.com/opentracing/opentracing-go"
+	"github.com/elastic/apm-agent-go/internal/contextutil"
 )
 
 // ContextWithSpan returns a copy of parent in which the given span
 // is stored, associated with the key ContextSpanKey.
 func ContextWithSpan(parent context.Context, s *Span) context.Context {
-	return opentracing.ContextWithSpan(parent, otSpan{
-		SpanContext: otSpanContext{
-			span:        s,
-			transaction: TransactionFromContext(parent),
-		},
-	})
+	return contextutil.ContextWithSpan(parent, s)
 }
 
 // ContextWithTransaction returns a copy of parent in which the given
 // transaction is stored, associated with the key ContextTransactionKey.
 func ContextWithTransaction(parent context.Context, t *Transaction) context.Context {
-	return opentracing.ContextWithSpan(parent, otTransactionSpan{
-		SpanContext: otTransactionSpanContext{
-			transaction: t,
-		},
-	})
+	return contextutil.ContextWithTransaction(parent, t)
 }
 
 // SpanFromContext returns the current Span in context, if any. The span must
-// have been added to the context previously using either ContextWithSpan
-// or SetSpanInContext.
+// have been added to the context previously using ContextWithSpan, or the
+// top-level StartSpan function.
 func SpanFromContext(ctx context.Context) *Span {
-	otSpan, _ := opentracing.SpanFromContext(ctx).(interface{ Span() *Span })
-	if otSpan == nil {
-		return nil
-	}
-	return otSpan.Span()
+	value, _ := contextutil.SpanFromContext(ctx).(*Span)
+	return value
 }
 
 // TransactionFromContext returns the current Transaction in context, if any.
-// The transaction must have been added to the context previously using either
-// ContextWithTransaction or SetTransactionInContext.
+// The transaction must have been added to the context previously using
+// ContextWithTransaction.
 func TransactionFromContext(ctx context.Context) *Transaction {
-	otSpan := opentracing.SpanFromContext(ctx)
-	if otSpan == nil {
-		return nil
-	}
-	if apmSpanContext, ok := otSpan.Context().(interface{ Transaction() *Transaction }); ok {
-		return apmSpanContext.Transaction()
-	}
-	return nil
+	value, _ := contextutil.TransactionFromContext(ctx).(*Transaction)
+	return value
 }
 
 // StartSpan is equivalent to calling StartSpanOptions with a zero SpanOptions struct.

@@ -23,6 +23,8 @@ type otSpan struct {
 	ctx  spanContext
 }
 
+// Span returns s.span, the underlying elasticapm.Span. This is used to satisfy
+// SpanFromContext.
 func (s *otSpan) Span() *elasticapm.Span {
 	return s.span
 }
