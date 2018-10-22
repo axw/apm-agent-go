@@ -249,11 +249,15 @@ func (tx *Transaction) enqueue() {
 	case tx.tracer.events <- event:
 	default:
 		// Enqueuing a transaction should never block.
+		tx.tracer.transactionHistograms.record(tx.TransactionData)
 		tx.tracer.breakdownMetrics.recordTransaction(tx.TransactionData)
 
 		// TODO(axw) use an atomic operation to increment.
 		tx.tracer.statsMu.Lock()
-		tx.tracer.stats.TransactionsDropped++
+		tx.tracer.stats.TransactionsRecorded++
+		if tx.Sampled() {
+			tx.tracer.stats.TransactionsDropped++
+		}
 		tx.tracer.statsMu.Unlock()
 		tx.reset(tx.tracer)
 	}

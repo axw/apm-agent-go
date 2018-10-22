@@ -305,18 +305,19 @@ type Tracer struct {
 	process *model.Process
 	system  *model.System
 
-	active            int32
-	bufferSize        int
-	metricsBufferSize int
-	closing           chan struct{}
-	closed            chan struct{}
-	forceFlush        chan chan<- struct{}
-	forceSendMetrics  chan chan<- struct{}
-	configCommands    chan tracerConfigCommand
-	configWatcher     chan apmconfig.Watcher
-	events            chan tracerEvent
-	breakdownMetrics  *breakdownMetrics
-	profileSender     profileSender
+	active                int32
+	bufferSize            int
+	metricsBufferSize     int
+	closing               chan struct{}
+	closed                chan struct{}
+	forceFlush            chan chan<- struct{}
+	forceSendMetrics      chan chan<- struct{}
+	configCommands        chan tracerConfigCommand
+	configWatcher         chan apmconfig.Watcher
+	events                chan tracerEvent
+	breakdownMetrics      *breakdownMetrics
+	profileSender         profileSender
+	transactionHistograms transactionHistograms
 
 	statsMu sync.Mutex
 	stats   TracerStats
@@ -371,6 +372,9 @@ func newTracer(opts TracerOptions) *Tracer {
 		profileSender:     opts.profileSender,
 		instrumentationConfigInternal: &instrumentationConfig{
 			local: make(map[string]func(*instrumentationConfigValues)),
+		},
+		transactionHistograms: transactionHistograms{
+			groups: make(map[transactionGroupKey]*transactionHistogram),
 		},
 	}
 	t.Service.Name = opts.ServiceName
@@ -838,6 +842,7 @@ func (t *Tracer) loop() {
 		case event := <-t.events:
 			switch event.eventType {
 			case transactionEvent:
+				t.transactionHistograms.record(event.tx.TransactionData)
 				if !t.breakdownMetrics.recordTransaction(event.tx.TransactionData) {
 					if !breakdownMetricsLimitWarningLogged && cfg.logger != nil {
 						cfg.logger.Warningf("%s", breakdownMetricsLimitWarning)
@@ -888,6 +893,7 @@ func (t *Tracer) loop() {
 				event := <-t.events
 				switch event.eventType {
 				case transactionEvent:
+					t.transactionHistograms.record(event.tx.TransactionData)
 					if !t.breakdownMetrics.recordTransaction(event.tx.TransactionData) {
 						if !breakdownMetricsLimitWarningLogged && cfg.logger != nil {
 							cfg.logger.Warningf("%s", breakdownMetricsLimitWarning)

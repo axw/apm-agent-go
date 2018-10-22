@@ -19,13 +19,14 @@ package apm
 
 // TracerStats holds statistics for a Tracer.
 type TracerStats struct {
-	Errors              TracerStatsErrors
-	ErrorsSent          uint64
-	ErrorsDropped       uint64
-	TransactionsSent    uint64
-	TransactionsDropped uint64
-	SpansSent           uint64
-	SpansDropped        uint64
+	Errors               TracerStatsErrors
+	ErrorsSent           uint64
+	ErrorsDropped        uint64
+	TransactionsSent     uint64
+	TransactionsDropped  uint64
+	TransactionsRecorded uint64
+	SpansSent            uint64
+	SpansDropped         uint64
 }
 
 // TracerStatsErrors holds error statistics for a Tracer.
@@ -49,4 +50,5 @@ func (s *TracerStats) accumulate(rhs TracerStats) {
 	s.SpansDropped += rhs.SpansDropped
 	s.TransactionsSent += rhs.TransactionsSent
 	s.TransactionsDropped += rhs.TransactionsDropped
+	s.TransactionsRecorded += rhs.TransactionsRecorded
 }
