@@ -293,7 +293,7 @@ func (h *Histogram) HighestTrackableValue() int64 {
 	return h.highestTrackableValue
 }
 
-// Histogram bar for plotting
+// Bar represents a histogram bar for plotting.
 type Bar struct {
 	From, To, Count int64
 }
