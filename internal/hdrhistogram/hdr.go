@@ -6,6 +6,7 @@ package hdrhistogram
 import (
 	"fmt"
 	"math"
+	"sync/atomic"
 )
 
 // A Bracket is a part of a cumulative distribution.
@@ -232,8 +233,9 @@ func (h *Histogram) RecordValues(v, n int64) error {
 	if idx < 0 || int(h.countsLen) <= idx {
 		return fmt.Errorf("value %d is too large to be recorded", v)
 	}
-	h.counts[idx] += n
-	h.totalCount += n
+	// TODO(axw) convert everything into atomic loads
+	atomic.AddInt64(&h.counts[idx], n)
+	atomic.AddInt64(&h.totalCount, n)
 
 	return nil
 }
@@ -335,8 +337,10 @@ func (h *Histogram) Equals(other *Histogram) bool {
 		h.totalCount != other.totalCount:
 		return false
 	default:
-		for i, c := range h.counts {
-			if c != other.counts[i] {
+		for i := range h.counts {
+			c := atomic.LoadInt64(&h.counts[i])
+			c2 := atomic.LoadInt64(&other.counts[i])
+			if c != c2 {
 				return false
 			}
 		}
@@ -347,12 +351,16 @@ func (h *Histogram) Equals(other *Histogram) bool {
 // Export returns a snapshot view of the Histogram. This can be later passed to
 // Import to construct a new Histogram with the same state.
 func (h *Histogram) Export() *Snapshot {
-	return &Snapshot{
+	s := &Snapshot{
 		LowestTrackableValue:  h.lowestTrackableValue,
 		HighestTrackableValue: h.highestTrackableValue,
 		SignificantFigures:    h.significantFigures,
-		Counts:                append([]int64(nil), h.counts...), // copy
+		Counts:                make([]int64, len(h.counts)),
 	}
+	for i := range h.counts {
+		s.Counts[i] = atomic.LoadInt64(&h.counts[i])
+	}
+	return s
 }
 
 // Import returns a new Histogram populated from the Snapshot data (which the

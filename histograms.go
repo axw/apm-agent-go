@@ -21,8 +21,12 @@ const (
 )
 
 type transactionHistograms struct {
-	mu     sync.Mutex
-	groups map[transactionGroupKey]*transactionHistogram
+	// TODO(axw) alternative for Go 1.8, which lacks sync.Map
+	groups sync.Map
+}
+
+func newTransactionHistograms() *transactionHistograms {
+	return &transactionHistograms{}
 }
 
 func (hs *transactionHistograms) record(tx *TransactionData) bool {
@@ -41,13 +45,13 @@ func (hs *transactionHistograms) get(tx *TransactionData) *transactionHistogram 
 	// choose period containing tx.Start. If tx is
 	// too old, just discard it.
 	k := makeTransactionGroupKey(tx)
-	hs.mu.Lock()
-	h, ok := hs.groups[k]
-	if !ok {
-		h = newTransactionHistogram()
-		hs.groups[k] = h
+	if val, ok := hs.groups.Load(k); ok {
+		return val.(*transactionHistogram)
 	}
-	hs.mu.Unlock()
+	h := newTransactionHistogram()
+	if val, ok := hs.groups.LoadOrStore(k, h); ok {
+		h = val.(*transactionHistogram)
+	}
 	return h
 }
 
@@ -84,7 +88,6 @@ func newTransactionHistogram() *transactionHistogram {
 }
 
 func (h *transactionHistogram) increment(d time.Duration) {
-	h.mu.Lock()
+	// RecordValue is safe for concurrent updates.
 	h.hdr.RecordValue(int64(d / histogramResolution))
-	h.mu.Unlock()
 }

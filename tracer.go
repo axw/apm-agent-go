@@ -317,7 +317,7 @@ type Tracer struct {
 	events                chan tracerEvent
 	breakdownMetrics      *breakdownMetrics
 	profileSender         profileSender
-	transactionHistograms transactionHistograms
+	transactionHistograms *transactionHistograms
 
 	statsMu sync.Mutex
 	stats   TracerStats
@@ -373,9 +373,7 @@ func newTracer(opts TracerOptions) *Tracer {
 		instrumentationConfigInternal: &instrumentationConfig{
 			local: make(map[string]func(*instrumentationConfigValues)),
 		},
-		transactionHistograms: transactionHistograms{
-			groups: make(map[transactionGroupKey]*transactionHistogram),
-		},
+		transactionHistograms: newTransactionHistograms(),
 	}
 	t.Service.Name = opts.ServiceName
 	t.Service.Version = opts.ServiceVersion

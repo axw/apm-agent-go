@@ -40,13 +40,11 @@ func BenchmarkTransactionHistograms(b *testing.B) {
 		makeTransaction("POST /api/orders/csv"),
 	}
 
-	ts := transactionHistograms{
-		groups: make(map[transactionGroupKey]*transactionHistogram),
-	}
-
+	ts := newTransactionHistograms()
 	b.ResetTimer()
+	is := rand.Perm(len(txs))
 	for i := 0; i < b.N; i++ {
-		tx := txs[rng()%int64(len(txs))]
+		tx := txs[is[i%len(is)]]
 		ts.record(tx)
 	}
 }
