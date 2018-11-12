@@ -2,6 +2,7 @@ package apm
 
 import (
 	"context"
+	"fmt"
 
 	"go.elastic.co/apm/internal/apmcontext"
 )
@@ -47,6 +48,17 @@ func StartSpan(ctx context.Context, name, spanType string) (*Span, context.Conte
 // when the span completes.
 func StartSpanOptions(ctx context.Context, name, spanType string, opts SpanOptions) (*Span, context.Context) {
 	tx := TransactionFromContext(ctx)
+	if tx == nil {
+		if tc := traceContext(); tc != (TraceContext{}) {
+			opts.Parent = tc
+			span := DefaultTracer.StartSpan(name, spanType, tc.Span, opts)
+			if !span.Dropped() {
+				ctx = ContextWithSpan(ctx, span)
+			}
+			fmt.Println("span:", span)
+			return span, ctx
+		}
+	}
 	span := tx.StartSpan(name, spanType, SpanFromContext(ctx))
 	if !span.Dropped() {
 		ctx = ContextWithSpan(ctx, span)
