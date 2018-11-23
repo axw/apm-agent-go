@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.elastic.co/apm/internal/apmconfig"
@@ -180,7 +181,7 @@ type Tracer struct {
 	process *model.Process
 	system  *model.System
 
-	active            bool
+	active            int32
 	bufferSize        int
 	metricsBufferSize int
 	closing           chan struct{}
@@ -251,18 +252,15 @@ func newTracer(opts options) *Tracer {
 		sampler:               opts.sampler,
 		captureBody:           opts.captureBody,
 		spanFramesMinDuration: opts.spanFramesMinDuration,
-		active:                opts.active,
 		bufferSize:            opts.bufferSize,
 		metricsBufferSize:     opts.metricsBufferSize,
+	}
+	if opts.active {
+		t.active = 1
 	}
 	t.Service.Name = opts.serviceName
 	t.Service.Version = opts.serviceVersion
 	t.Service.Environment = opts.serviceEnvironment
-
-	if !t.active {
-		close(t.closed)
-		return t
-	}
 
 	go t.loop()
 	t.configCommands <- func(cfg *tracerConfig) {
@@ -283,6 +281,7 @@ func newTracer(opts options) *Tracer {
 // tracerConfig holds the tracer's runtime configuration, which may be modified
 // by sending a tracerConfigCommand to the tracer's configCommands channel.
 type tracerConfig struct {
+	active                  bool
 	requestSize             int
 	requestDuration         time.Duration
 	metricsInterval         time.Duration
@@ -295,8 +294,7 @@ type tracerConfig struct {
 
 type tracerConfigCommand func(*tracerConfig)
 
-// Close closes the Tracer, preventing transactions from being
-// sent to the APM server.
+// Close closes the Tracer, preventing transactions from being sent to the APM Server.
 func (t *Tracer) Close() {
 	select {
 	case <-t.closing:
@@ -307,8 +305,8 @@ func (t *Tracer) Close() {
 }
 
 // Flush waits for the Tracer to flush any transactions and errors it currently
-// has queued to the APM server, the tracer is stopped, or the abort channel
-// is signaled.
+// has queued to the APM Server, the tracer is closed, or the abort channel is
+// signaled.
 func (t *Tracer) Flush(abort <-chan struct{}) {
 	flushed := make(chan struct{}, 1)
 	select {
@@ -323,13 +321,35 @@ func (t *Tracer) Flush(abort <-chan struct{}) {
 }
 
 // Active reports whether the tracer is active. If the tracer is inactive,
-// no transactions or errors will be sent to the Elastic APM server.
+// no new transactions, spans, errors, or metrics will be will be sent to
+// the APM Server.
 func (t *Tracer) Active() bool {
-	return t.active
+	return atomic.LoadInt32(&t.active) == 1
+}
+
+// SetActive activates or deactivates the tracer.
+//
+// If the tracer is inactive, no new transactons, spans, errors, or metrics
+// will be sent to the server. The current stream, if any, will be closed.
+//
+// SetActive has no effect when called on a closing/closed tracer.
+func (t *Tracer) SetActive(active bool) {
+	t.sendConfigCommand(func(cfg *tracerConfig) {
+		if cfg.active == active {
+			return
+		}
+		// We update the active state inside a config
+		// command to wake up the tracer loop.
+		var val int32 = 0
+		if active {
+			val = 1
+		}
+		atomic.StoreInt32(&t.active, val)
+	})
 }
 
 // SetRequestDuration sets the maximum amount of time to keep a request open
-// to the APM server for streaming data before closing the stream and starting
+// to the APM Server for streaming data before closing the stream and starting
 // a new request.
 func (t *Tracer) SetRequestDuration(d time.Duration) {
 	t.sendConfigCommand(func(cfg *tracerConfig) {
@@ -481,6 +501,7 @@ func (t *Tracer) loop() {
 	ctx, cancelContext := context.WithCancel(context.Background())
 	defer cancelContext()
 	defer close(t.closed)
+	defer atomic.StoreInt32(&t.active, 0)
 
 	var req iochan.ReadRequest
 	var requestBuf bytes.Buffer
@@ -551,6 +572,21 @@ func (t *Tracer) loop() {
 		stats:         &stats,
 	}
 
+	transactions := t.transactions
+	spans := t.spans
+	errors := t.errors
+	updateActive := func() {
+		if cfg.active {
+			transactions = nil
+			spans = nil
+			errors = nil
+		} else {
+			transactions = t.transactions
+			spans = t.spans
+			errors = t.errors
+		}
+	}
+
 	for {
 		var gatherMetrics bool
 		select {
@@ -560,15 +596,16 @@ func (t *Tracer) loop() {
 			return
 		case cmd := <-t.configCommands:
 			oldMetricsInterval := cfg.metricsInterval
+			oldActive := cfg.active
 			cmd(&cfg)
-			if !gatheringMetrics && cfg.metricsInterval != oldMetricsInterval {
+			if !gatheringMetrics && (cfg.metricsInterval != oldMetricsInterval || cfg.active != oldActive) {
 				if metricsTimerStart.IsZero() {
-					if cfg.metricsInterval > 0 {
+					if cfg.active && cfg.metricsInterval > 0 {
 						metricsTimer.Reset(cfg.metricsInterval)
 						metricsTimerStart = time.Now()
 					}
 				} else {
-					if cfg.metricsInterval <= 0 {
+					if !cfg.active || cfg.metricsInterval <= 0 {
 						metricsTimerStart = time.Time{}
 						if !metricsTimer.Stop() {
 							<-metricsTimer.C
@@ -583,12 +620,26 @@ func (t *Tracer) loop() {
 					}
 				}
 			}
+			if cfg.active != oldActive {
+				updateActive()
+				if !cfg.active && requestActive {
+					// Going inactive, close the current request first.
+					closeRequest = true
+					if requestTimerActive {
+						requestTimerActive = false
+						if !requestTimer.Stop() {
+							<-requestTimer.C
+						}
+					}
+					break
+				}
+			}
 			continue
-		case tx := <-t.transactions:
+		case tx := <-transactions:
 			modelWriter.writeTransaction(tx)
-		case s := <-t.spans:
+		case s := <-spans:
 			modelWriter.writeSpan(s)
-		case e := <-t.errors:
+		case e := <-errors:
 			// Flush the buffer to transmit the error immediately.
 			modelWriter.writeError(e)
 			flushRequest = true
@@ -609,6 +660,9 @@ func (t *Tracer) loop() {
 		case <-gatheredMetrics:
 			modelWriter.writeMetrics(&metrics)
 			gatheringMetrics = false
+			if !cfg.active {
+				continue
+			}
 			flushRequest = true
 			if cfg.metricsInterval > 0 {
 				metricsTimerStart = time.Now()
