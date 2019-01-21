@@ -11,3 +11,5 @@ require (
 replace go.elastic.co/apm => ../..
 
 replace go.elastic.co/apm/module/apmhttp => ../apmhttp
+
+replace github.com/opentracing/opentracing-go => github.com/opentracing/opentracing-go v1.0.2-0.20181129202257-8b5a441dc60e
