@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased](https://github.com/elastic/apm-agent-go/compare/v1.2.0...master)
+## [Unreleased](https://github.com/elastic/apm-agent-go/compare/v1.2.1...master)
+
+## [v1.2.1](https://github.com/elastic/apm-agent-go/releases/tag/v1.2.1)
 
  - Rename "metricset.labels" to "metricset.tags" (#438)
 
