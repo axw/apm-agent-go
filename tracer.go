@@ -229,7 +229,7 @@ type Tracer struct {
 	spanFramesMinDuration   time.Duration
 
 	samplerMu sync.RWMutex
-	sampler   Sampler
+	sampler   TransactionSampler
 
 	captureHeadersMu sync.RWMutex
 	captureHeaders   bool
@@ -279,7 +279,7 @@ func newTracer(opts options) *Tracer {
 		errors:                make(chan *ErrorData, errorsChannelCap),
 		active:                1,
 		maxSpans:              opts.maxSpans,
-		sampler:               opts.sampler,
+		sampler:               makeTransactionSampler(opts.sampler),
 		captureHeaders:        opts.captureHeaders,
 		captureBody:           opts.captureBody,
 		spanFramesMinDuration: opts.spanFramesMinDuration,
@@ -458,7 +458,7 @@ func (t *Tracer) sendConfigCommand(cmd tracerConfigCommand) {
 // in which case all transactions will be sampled.
 func (t *Tracer) SetSampler(s Sampler) {
 	t.samplerMu.Lock()
-	t.sampler = s
+	t.sampler = makeTransactionSampler(s)
 	t.samplerMu.Unlock()
 }
 

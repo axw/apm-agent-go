@@ -100,7 +100,7 @@ func (t *Tracer) StartTransactionOptions(name, transactionType string, opts Tran
 		t.samplerMu.RLock()
 		sampler := t.sampler
 		t.samplerMu.RUnlock()
-		if sampler == nil || sampler.Sample(tx.traceContext) {
+		if sampler == nil || sampler.SampleTransaction(tx) {
 			o := tx.traceContext.Options.WithRecorded(true)
 			tx.traceContext.Options = o
 		}

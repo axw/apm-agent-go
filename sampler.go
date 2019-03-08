@@ -32,7 +32,28 @@ type Sampler interface {
 	// by calls to Tracer.StartTransaction for the root
 	// of a trace, so it must be goroutine-safe, and
 	// should avoid synchronization as far as possible.
+	//
+	// NOTE Sampler will be changed in the future to
+	// accept a *Transaction, and TransactionSampler
+	// will be removed.
 	Sample(TraceContext) bool
+}
+
+// TransactionSampler is an interface that Samplers may optionally
+// implement, in which case SampleTransaction will be used in favour
+// of Sample.
+type TransactionSampler interface {
+	// SampleTransaction indicates whether or not tx should
+	// be sampled. This method will be invoked by calls to
+	// Tracer.StartTransaction for the root of a trace, so it
+	// must be goroutine-safe, and should avoid synchronization
+	// as far as possible.
+	//
+	// If a Sampler implements TransactionSampler, then only
+	// SampleTransaction will be called, and not Sample.
+	//
+	// SampleTransaction must not modify tx.
+	SampleTransaction(tx *Transaction) bool
 }
 
 // NewRatioSampler returns a new Sampler with the given ratio
@@ -63,4 +84,22 @@ type ratioSampler struct {
 func (s ratioSampler) Sample(c TraceContext) bool {
 	v := binary.BigEndian.Uint64(c.Span[:])
 	return v > 0 && v-1 < s.ceil
+}
+
+type basicTransactionSampler struct {
+	Sampler
+}
+
+func (s basicTransactionSampler) SampleTransaction(tx *Transaction) bool {
+	return s.Sample(tx.traceContext)
+}
+
+func makeTransactionSampler(s Sampler) TransactionSampler {
+	switch s := s.(type) {
+	case nil:
+		return nil
+	case TransactionSampler:
+		return s
+	}
+	return basicTransactionSampler{s}
 }
