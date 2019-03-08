@@ -103,3 +103,29 @@ func makeTransactionSampler(s Sampler) TransactionSampler {
 	}
 	return basicTransactionSampler{s}
 }
+
+type TransactionNameSampler struct {
+	samplers       map[string]TransactionSampler
+	defaultSampler TransactionSampler
+}
+
+func NewTransactionNameSampler(samplers map[string]TransactionSampler, defaultSampler TransactionSampler) *TransactionNameSampler {
+	if defaultSampler == nil {
+		defaultSampler = staticSampler(true)
+	}
+	return &TransactionNameSampler{samplers: samplers, defaultSampler: defaultSampler}
+}
+
+func (s *TransactionNameSampler) SampleTransaction(tx *Transaction) bool {
+	sampler, ok := s.samplers[tx.Name]
+	if !ok {
+		sampler = s.defaultSampler
+	}
+	return sampler.SampleTransaction(tx)
+}
+
+type staticSampler bool
+
+func (s staticSampler) SampleTransaction(tx *Transaction) bool {
+	return bool(s)
+}
