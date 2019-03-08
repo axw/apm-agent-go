@@ -129,8 +129,50 @@ func TestTransactionEnsureParent(t *testing.T) {
 	assert.Equal(t, model.SpanID(parentSpan), payloads.Transactions[0].ParentID)
 }
 
+func TestTransactionNameSampler(t *testing.T) {
+	tracer, transport := transporttest.NewRecorderTracer()
+	defer tracer.Close()
+
+	sampler := apm.NewTransactionNameSampler(map[string]apm.TransactionSampler{
+		"nope": transactionSamplerFunc(func(*apm.Transaction) bool { return false }),
+		"yep":  transactionSamplerFunc(func(*apm.Transaction) bool { return true }),
+	}, nil)
+	tracer.SetSampler(sampler)
+
+	tracer.StartTransaction("nope", "type").End()
+	tracer.StartTransaction("nope", "type").End()
+	tracer.StartTransaction("nope", "type").End()
+	tracer.StartTransaction("yep", "type").End()
+	tracer.StartTransaction("yep", "type").End()
+	tracer.StartTransaction("yep", "type").End()
+	tracer.Flush(nil)
+
+	payloads := transport.Payloads()
+	require.Len(t, payloads.Transactions, 6)
+	for _, tx := range payloads.Transactions[:3] {
+		assert.Equal(t, "nope", tx.Name)
+		if assert.NotNil(t, tx.Sampled) {
+			assert.False(t, *tx.Sampled)
+		}
+	}
+	for _, tx := range payloads.Transactions[3:] {
+		assert.Equal(t, "yep", tx.Name)
+		assert.Nil(t, tx.Sampled) // sampled
+	}
+}
+
 type samplerFunc func(apm.TraceContext) bool
 
 func (f samplerFunc) Sample(t apm.TraceContext) bool {
 	return f(t)
+}
+
+type transactionSamplerFunc func(*apm.Transaction) bool
+
+func (f transactionSamplerFunc) Sample(apm.TraceContext) bool {
+	panic("Sample should not be called")
+}
+
+func (f transactionSamplerFunc) SampleTransaction(tx *apm.Transaction) bool {
+	return f(tx)
 }

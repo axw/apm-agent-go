@@ -67,7 +67,6 @@ func TestRatioSampler(t *testing.T) {
 
 func TestRatioSamplerAlways(t *testing.T) {
 	s := apm.NewRatioSampler(1.0)
-	assert.False(t, s.Sample(apm.TraceContext{})) // invalid span ID
 	assert.True(t, s.Sample(apm.TraceContext{
 		Span: apm.SpanID{0, 0, 0, 0, 0, 0, 0, 1},
 	}))
@@ -78,7 +77,6 @@ func TestRatioSamplerAlways(t *testing.T) {
 
 func TestRatioSamplerNever(t *testing.T) {
 	s := apm.NewRatioSampler(0)
-	assert.False(t, s.Sample(apm.TraceContext{})) // invalid span ID
 	assert.False(t, s.Sample(apm.TraceContext{
 		Span: apm.SpanID{0, 0, 0, 0, 0, 0, 0, 1},
 	}))

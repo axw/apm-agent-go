@@ -43,6 +43,8 @@ type Sampler interface {
 // implement, in which case SampleTransaction will be used in favour
 // of Sample.
 type TransactionSampler interface {
+	Sampler
+
 	// SampleTransaction indicates whether or not tx should
 	// be sampled. This method will be invoked by calls to
 	// Tracer.StartTransaction for the root of a trace, so it
@@ -65,7 +67,12 @@ type TransactionSampler interface {
 // The returned Sampler bases its decision on the value of the
 // transaction ID, so there is no synchronization involved.
 func NewRatioSampler(r float64) Sampler {
-	if r < 0 || r > 1.0 {
+	switch {
+	case r == 0:
+		return boolSampler(false)
+	case r == 1:
+		return boolSampler(true)
+	case r < 0 || r > 1.0:
 		panic(errors.Errorf("ratio %v out of range [0,1.0]", r))
 	}
 	var x big.Float
@@ -111,9 +118,13 @@ type TransactionNameSampler struct {
 
 func NewTransactionNameSampler(samplers map[string]TransactionSampler, defaultSampler TransactionSampler) *TransactionNameSampler {
 	if defaultSampler == nil {
-		defaultSampler = staticSampler(true)
+		defaultSampler = boolSampler(true)
 	}
 	return &TransactionNameSampler{samplers: samplers, defaultSampler: defaultSampler}
+}
+
+func (s *TransactionNameSampler) Sample(TraceContext) bool {
+	return false
 }
 
 func (s *TransactionNameSampler) SampleTransaction(tx *Transaction) bool {
@@ -124,8 +135,12 @@ func (s *TransactionNameSampler) SampleTransaction(tx *Transaction) bool {
 	return sampler.SampleTransaction(tx)
 }
 
-type staticSampler bool
+type boolSampler bool
 
-func (s staticSampler) SampleTransaction(tx *Transaction) bool {
+func (s boolSampler) Sample(TraceContext) bool {
+	return bool(s)
+}
+
+func (s boolSampler) SampleTransaction(*Transaction) bool {
 	return bool(s)
 }
