@@ -22,6 +22,7 @@ import (
 	"math/rand"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -83,4 +84,16 @@ func TestRatioSamplerNever(t *testing.T) {
 	assert.False(t, s.Sample(apm.TraceContext{
 		Span: apm.SpanID{255, 255, 255, 255, 255, 255, 255, 255},
 	}))
+}
+
+func TestRateLimitSampler(t *testing.T) {
+	sampler := apm.NewRateLimitSampler(20, 3)
+	start := time.Now()
+	var sampled int
+	for time.Since(start) < time.Second {
+		if sampler.Sample(apm.TraceContext{}) {
+			sampled++
+		}
+	}
+	assert.Equal(t, 22, sampled)
 }

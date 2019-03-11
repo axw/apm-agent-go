@@ -21,6 +21,8 @@ import (
 	"encoding/binary"
 	"math"
 	"math/big"
+	"sync/atomic"
+	"time"
 
 	"github.com/pkg/errors"
 )
@@ -56,6 +58,49 @@ type TransactionSampler interface {
 	//
 	// SampleTransaction must not modify tx.
 	SampleTransaction(tx *Transaction) bool
+}
+
+// NewRateLimitSampler returns a new Sampler with the given rate,
+// measured in root transactions per second, and maximum capacity.
+//
+// The sampler will allow "capacity" transactions to burst, and
+// then will allow transactions through at the specified rate.
+func NewRateLimitSampler(rate float64, capacity int64) Sampler {
+	interval := time.Duration(float64(time.Second) / rate)
+	return &rateLimitSampler{
+		lastElapsed: int64(interval) * -capacity,
+		ref:         time.Now(),
+		fillRate:    rate,
+		capacity:    capacity,
+	}
+}
+
+type rateLimitSampler struct {
+	lastElapsed int64 // duration since ref
+	ref         time.Time
+	fillRate    float64 // per second
+	capacity    int64
+}
+
+// Sample samples the transaction according to the configured capacity and rate.
+func (s *rateLimitSampler) Sample(TraceContext) bool {
+	for {
+		lastElapsed := time.Duration(atomic.LoadInt64(&s.lastElapsed))
+		newElapsed := time.Since(s.ref)
+		elapsed := newElapsed - lastElapsed
+		remaining := int64(elapsed.Seconds() * s.fillRate)
+		if remaining <= 0 {
+			return false
+		}
+		remaining--
+		if remaining > s.capacity {
+			remaining = s.capacity
+		}
+		newElapsed -= time.Duration(float64(remaining) * (float64(time.Second) / s.fillRate))
+		if atomic.CompareAndSwapInt64(&s.lastElapsed, int64(lastElapsed), int64(newElapsed)) {
+			return true
+		}
+	}
 }
 
 // NewRatioSampler returns a new Sampler with the given ratio
