@@ -45,7 +45,7 @@ type modelWriter struct {
 }
 
 // writeTransaction encodes tx as JSON to the buffer, and then resets tx.
-func (w *modelWriter) writeTransaction(tx *TransactionData) {
+func (w *modelWriter) writeTransaction(tx *Transaction) {
 	var modelTx model.Transaction
 	w.buildModelTransaction(&modelTx, tx)
 	w.json.RawString(`{"transaction":`)
@@ -57,7 +57,7 @@ func (w *modelWriter) writeTransaction(tx *TransactionData) {
 }
 
 // writeSpan encodes s as JSON to the buffer, and then resets s.
-func (w *modelWriter) writeSpan(s *SpanData) {
+func (w *modelWriter) writeSpan(s *Span) {
 	var modelSpan model.Span
 	w.buildModelSpan(&modelSpan, s)
 	w.json.RawString(`{"span":`)
@@ -95,7 +95,7 @@ func (w *modelWriter) writeMetrics(m *Metrics) {
 	m.reset()
 }
 
-func (w *modelWriter) buildModelTransaction(out *model.Transaction, tx *TransactionData) {
+func (w *modelWriter) buildModelTransaction(out *model.Transaction, tx *Transaction) {
 	out.ID = model.SpanID(tx.traceContext.Span)
 	out.TraceID = model.TraceID(tx.traceContext.Trace)
 	out.ParentID = model.SpanID(tx.parentSpan)
@@ -123,7 +123,7 @@ func (w *modelWriter) buildModelTransaction(out *model.Transaction, tx *Transact
 	}
 }
 
-func (w *modelWriter) buildModelSpan(out *model.Span, span *SpanData) {
+func (w *modelWriter) buildModelSpan(out *model.Span, span *Span) {
 	w.modelStacktrace = w.modelStacktrace[:0]
 	out.ID = model.SpanID(span.traceContext.Span)
 	out.TraceID = model.TraceID(span.traceContext.Trace)

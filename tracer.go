@@ -215,8 +215,8 @@ type Tracer struct {
 	forceFlush        chan chan<- struct{}
 	forceSendMetrics  chan chan<- struct{}
 	configCommands    chan tracerConfigCommand
-	transactions      chan *TransactionData
-	spans             chan *SpanData
+	transactions      chan *Transaction
+	spans             chan *Span
 	errors            chan *ErrorData
 
 	statsMu sync.Mutex
@@ -274,8 +274,8 @@ func newTracer(opts options) *Tracer {
 		forceFlush:            make(chan chan<- struct{}),
 		forceSendMetrics:      make(chan chan<- struct{}),
 		configCommands:        make(chan tracerConfigCommand),
-		transactions:          make(chan *TransactionData, transactionsChannelCap),
-		spans:                 make(chan *SpanData, spansChannelCap),
+		transactions:          make(chan *Transaction, transactionsChannelCap),
+		spans:                 make(chan *Span, spansChannelCap),
 		errors:                make(chan *ErrorData, errorsChannelCap),
 		active:                1,
 		maxSpans:              opts.maxSpans,

@@ -51,6 +51,26 @@ func TransactionFromContext(ctx context.Context) *Transaction {
 	return value
 }
 
+// DetachedContext returns a new context detached from the lifetime
+// of ctx, but which still returns the values of ctx.
+//
+// DetachedContext can be used to maintain the trace context required
+// to correlate events, but where the operation is "fire-and-forget",
+// and should not be affected by the deadline or cancellation of ctx.
+func DetachedContext(ctx context.Context) context.Context {
+	return &detachedContext{Context: context.Background(), orig: ctx}
+}
+
+type detachedContext struct {
+	context.Context
+	orig context.Context
+}
+
+// Value returns c.orig.Value(key).
+func (c *detachedContext) Value(key interface{}) interface{} {
+	return c.orig.Value(key)
+}
+
 // StartSpan is equivalent to calling StartSpanOptions with a zero SpanOptions struct.
 func StartSpan(ctx context.Context, name, spanType string) (*Span, context.Context) {
 	return StartSpanOptions(ctx, name, spanType, SpanOptions{})
@@ -90,22 +110,26 @@ func CaptureError(ctx context.Context, err error) *Error {
 	}
 
 	var tracer *Tracer
-	var txData *TransactionData
-	var spanData *SpanData
-	if tx := TransactionFromContext(ctx); tx != nil {
-		tx.mu.RLock()
-		defer tx.mu.RUnlock()
-		if !tx.ended() {
-			txData = tx.TransactionData
-			tracer = tx.tracer
-		}
-	}
+	var traceContext TraceContext
+	var transactionID SpanID
+	var transactionType string
 	if span := SpanFromContext(ctx); span != nil {
 		span.mu.RLock()
 		defer span.mu.RUnlock()
+		traceContext = span.traceContext
 		if !span.ended() {
-			spanData = span.SpanData
 			tracer = span.tracer
+			transactionID = span.transactionID
+		}
+	}
+	if tx := TransactionFromContext(ctx); tx != nil {
+		tx.mu.RLock()
+		defer tx.mu.RUnlock()
+		traceContext = tx.traceContext
+		transactionID = tx.traceContext.Span
+		tracer = tx.tracer
+		if !tx.ended() {
+			transactionType = tx.Type
 		}
 	}
 	if tracer == nil {
@@ -114,6 +138,6 @@ func CaptureError(ctx context.Context, err error) *Error {
 
 	e := tracer.NewError(err)
 	e.Handled = true
-	e.setSpanData(txData, spanData)
+	e.setSpanData(traceContext, transactionID, transactionType)
 	return e
 }

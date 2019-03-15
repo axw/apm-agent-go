@@ -232,14 +232,15 @@ func (e *Error) Error() string {
 
 // SetTransaction sets TraceID, TransactionID, and ParentID to the transaction's
 // IDs, and records the transaction's Type and whether or not it was sampled.
-//
-// SetTransaction has no effect if called with an ended transaction.
 func (e *Error) SetTransaction(tx *Transaction) {
 	tx.mu.RLock()
+	traceContext := tx.traceContext
+	var txType string
 	if !tx.ended() {
-		e.setSpanData(tx.TransactionData, nil)
+		txType = tx.Type
 	}
 	tx.mu.RUnlock()
+	e.setSpanData(traceContext, traceContext.Span, txType)
 }
 
 // SetSpan sets TraceID, TransactionID, and ParentID to the span's IDs.
@@ -253,25 +254,18 @@ func (e *Error) SetTransaction(tx *Transaction) {
 func (e *Error) SetSpan(s *Span) {
 	s.mu.RLock()
 	if !s.ended() {
-		e.setSpanData(nil, s.SpanData)
+		e.setSpanData(s.traceContext, s.transactionID, "")
 	}
 	s.mu.RUnlock()
 }
 
-func (e *Error) setSpanData(td *TransactionData, sd *SpanData) {
-	if sd != nil {
-		e.TraceID = sd.traceContext.Trace
-		e.ParentID = sd.traceContext.Span
-		e.TransactionID = sd.transactionID
-		e.transactionSampled = true // by virtue of there being a span
-	} else if td != nil {
-		e.TraceID = td.traceContext.Trace
-		e.ParentID = td.traceContext.Span
-		e.TransactionID = e.ParentID
-		e.transactionSampled = td.traceContext.Options.Recorded()
-	}
-	if e.transactionSampled && td != nil {
-		e.transactionType = td.Type
+func (e *Error) setSpanData(traceContext TraceContext, transactionID SpanID, transactionType string) {
+	e.TraceID = traceContext.Trace
+	e.ParentID = traceContext.Span
+	e.TransactionID = transactionID
+	e.transactionSampled = traceContext.Options.Recorded()
+	if e.transactionSampled {
+		e.transactionType = transactionType
 	}
 }
 
