@@ -287,7 +287,7 @@ func (e *Error) sent() bool {
 
 func (e *ErrorData) enqueue() {
 	select {
-	case e.tracer.errors <- e:
+	case e.tracer.events <- tracerEvent{eventType: errorEvent, err: e}:
 	default:
 		// Enqueuing an error should never block.
 		e.tracer.statsMu.Lock()

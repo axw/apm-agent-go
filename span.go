@@ -110,6 +110,7 @@ func (tx *Transaction) StartSpanOptions(name, spanType string, opts SpanOptions)
 		binary.LittleEndian.PutUint64(span.traceContext.Span[:], tx.rand.Uint64())
 	}
 	span.stackFramesMinDuration = tx.spanFramesMinDuration
+	span.tx = tx
 	tx.spansCreated++
 	return span
 }
@@ -228,11 +229,6 @@ func (s *Span) TraceContext() TraceContext {
 	if s == nil {
 		return TraceContext{}
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.ended() {
-		return TraceContext{}
-	}
 	return s.traceContext
 }
 
@@ -292,29 +288,22 @@ func (s *Span) End() {
 		s.setStacktrace(1)
 	}
 	s.enqueue()
+	s.SpanData = nil
 }
 
 func (s *Span) enqueue() {
+	event := tracerEvent{eventType: spanEvent}
+	event.span.Span = s
+	event.span.SpanData = s.SpanData
 	select {
-	case s.tracer.spans <- s:
+	case s.tracer.events <- event:
 	default:
 		// Enqueuing a span should never block.
 		s.tracer.statsMu.Lock()
 		s.tracer.stats.SpansDropped++
 		s.tracer.statsMu.Unlock()
-		s.reset()
+		s.reset(s.tracer)
 	}
-}
-
-func (s *Span) reset() {
-	*s.SpanData = SpanData{
-		Context:    s.SpanData.Context,
-		Duration:   -1,
-		stacktrace: s.SpanData.stacktrace[:0],
-	}
-	s.Context.reset()
-	s.tracer.spanDataPool.Put(s.SpanData)
-	s.SpanData = nil
 }
 
 func (s *Span) ended() bool {
@@ -358,4 +347,14 @@ type SpanData struct {
 
 func (s *SpanData) setStacktrace(skip int) {
 	s.stacktrace = stacktrace.AppendStacktrace(s.stacktrace[:0], skip+1, -1)
+}
+
+func (s *SpanData) reset(tracer *Tracer) {
+	*s = SpanData{
+		Context:    s.Context,
+		Duration:   -1,
+		stacktrace: s.stacktrace[:0],
+	}
+	s.Context.reset()
+	tracer.spanDataPool.Put(s)
 }

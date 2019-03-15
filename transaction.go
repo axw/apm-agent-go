@@ -202,7 +202,7 @@ func (tx *Transaction) Discard() {
 	if tx.ended() {
 		return
 	}
-	tx.reset()
+	tx.reset(tx.tracer)
 }
 
 // End enqueues tx for sending to the Elastic APM server.
@@ -222,31 +222,22 @@ func (tx *Transaction) End() {
 		tx.Duration = time.Since(tx.timestamp)
 	}
 	tx.enqueue()
+	tx.TransactionData = nil
 }
 
 func (tx *Transaction) enqueue() {
+	event := tracerEvent{eventType: transactionEvent}
+	event.tx.Transaction = tx
+	event.tx.TransactionData = tx.TransactionData
 	select {
-	case tx.tracer.transactions <- tx:
+	case tx.tracer.events <- event:
 	default:
 		// Enqueuing a transaction should never block.
 		tx.tracer.statsMu.Lock()
 		tx.tracer.stats.TransactionsDropped++
 		tx.tracer.statsMu.Unlock()
-		tx.reset()
+		tx.reset(tx.tracer)
 	}
-}
-
-// reset resets the Transaction back to its zero state and places it back
-// into the transaction pool.
-func (tx *Transaction) reset() {
-	*tx.TransactionData = TransactionData{
-		Context:  tx.TransactionData.Context,
-		Duration: -1,
-		rand:     tx.TransactionData.rand,
-	}
-	tx.TransactionData.Context.reset()
-	tx.tracer.transactionDataPool.Put(tx.TransactionData)
-	tx.TransactionData = nil
 }
 
 // ended reports whether or not End or Discard has been called.
@@ -289,4 +280,16 @@ type TransactionData struct {
 	spansCreated int
 	spansDropped int
 	rand         *rand.Rand // for ID generation
+}
+
+// reset resets the TransactionData back to its zero state and places it back
+// into the transaction pool.
+func (td *TransactionData) reset(tracer *Tracer) {
+	*td = TransactionData{
+		Context:  td.Context,
+		Duration: -1,
+		rand:     td.rand,
+	}
+	td.Context.reset()
+	tracer.transactionDataPool.Put(td)
 }

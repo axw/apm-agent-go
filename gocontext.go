@@ -86,9 +86,17 @@ func StartSpan(ctx context.Context, name, spanType string) (*Span, context.Conte
 // StartSpanOptions always returns a non-nil Span. Its End method must be called
 // when the span completes.
 func StartSpanOptions(ctx context.Context, name, spanType string, opts SpanOptions) (*Span, context.Context) {
-	tx := TransactionFromContext(ctx)
-	opts.parent = SpanFromContext(ctx)
-	span := tx.StartSpanOptions(name, spanType, opts)
+	var span *Span
+	if opts.parent = SpanFromContext(ctx); opts.parent != nil {
+		if opts.parent.tx == nil && opts.parent.tracer != nil {
+			span = opts.parent.tracer.StartSpan(name, spanType, opts.parent.transactionID, opts)
+		} else {
+			span = opts.parent.tx.StartSpanOptions(name, spanType, opts)
+		}
+	} else {
+		tx := TransactionFromContext(ctx)
+		span = tx.StartSpanOptions(name, spanType, opts)
+	}
 	if !span.Dropped() {
 		ctx = ContextWithSpan(ctx, span)
 	}
