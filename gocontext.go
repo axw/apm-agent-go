@@ -116,36 +116,23 @@ func CaptureError(ctx context.Context, err error) *Error {
 	if err == nil {
 		return nil
 	}
-
-	var tracer *Tracer
-	var traceContext TraceContext
-	var transactionID SpanID
-	var transactionType string
 	if span := SpanFromContext(ctx); span != nil {
-		span.mu.RLock()
-		defer span.mu.RUnlock()
-		traceContext = span.traceContext
-		if !span.ended() {
-			tracer = span.tracer
-			transactionID = span.transactionID
+		if span.tracer == nil {
+			return &Error{cause: err, err: err.Error()}
 		}
-	}
-	if tx := TransactionFromContext(ctx); tx != nil {
-		tx.mu.RLock()
-		defer tx.mu.RUnlock()
-		traceContext = tx.traceContext
-		transactionID = tx.traceContext.Span
-		tracer = tx.tracer
-		if !tx.ended() {
-			transactionType = tx.Type
+		e := span.tracer.NewError(err)
+		e.Handled = true
+		e.SetSpan(span)
+		return e
+	} else if tx := TransactionFromContext(ctx); tx != nil {
+		if tx.tracer == nil {
+			return &Error{cause: err, err: err.Error()}
 		}
-	}
-	if tracer == nil {
+		e := tx.tracer.NewError(err)
+		e.Handled = true
+		e.SetTransaction(tx)
+		return e
+	} else {
 		return &Error{cause: err, err: err.Error()}
 	}
-
-	e := tracer.NewError(err)
-	e.Handled = true
-	e.setSpanData(traceContext, transactionID, transactionType)
-	return e
 }

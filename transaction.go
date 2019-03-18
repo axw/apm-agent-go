@@ -242,7 +242,7 @@ func (tx *Transaction) enqueue() {
 
 // ended reports whether or not End or Discard has been called.
 //
-// This must be called with tx.mu held for reading.
+// This must be called with tx.mu held.
 func (tx *Transaction) ended() bool {
 	return tx.TransactionData == nil
 }

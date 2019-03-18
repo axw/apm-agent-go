@@ -245,18 +245,19 @@ func (e *Error) SetTransaction(tx *Transaction) {
 
 // SetSpan sets TraceID, TransactionID, and ParentID to the span's IDs.
 //
-// If you call both SetTransaction and SetSpan, SetSpan must be called second
-// in order to set the error's ParentID correctly. When calling SetSpan, it is
-// only necessary to call SetTransaction in order to set the error's transaction
-// type.
-//
-// SetSpan has no effect if called with an ended span.
+// There is no need to call both SetTransaction and SetSpan. If you do call
+// both, then SetSpan must be called second in order to set the error's
+// ParentID correctly.
 func (e *Error) SetSpan(s *Span) {
-	s.mu.RLock()
-	if !s.ended() {
-		e.setSpanData(s.traceContext, s.transactionID, "")
+	var txType string
+	if s.tx != nil {
+		s.tx.mu.RLock()
+		if !s.tx.ended() {
+			txType = s.tx.Type
+		}
+		s.tx.mu.RUnlock()
 	}
-	s.mu.RUnlock()
+	e.setSpanData(s.traceContext, s.transactionID, txType)
 }
 
 func (e *Error) setSpanData(traceContext TraceContext, transactionID SpanID, transactionType string) {
