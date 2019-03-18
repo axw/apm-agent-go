@@ -890,13 +890,26 @@ const (
 
 type tracerEvent struct {
 	eventType tracerEventType
-	tx        struct {
+
+	// err is set only if eventType == errorEvent.
+	err *ErrorData
+
+	// tx is set only if eventType == transactionEvent.
+	tx struct {
 		*Transaction
+		// Transaction.TransactionData is nil at the
+		// point tracerEvent is created (to signify
+		// that the transaction is ended), so we pass
+		// it along side.
 		*TransactionData
 	}
+
+	// span is set only if eventType == spanEvent.
 	span struct {
 		*Span
+		// Span.SpanData is nil at the point tracerEvent
+		// is created (to signify that the span is ended),
+		// so we pass it along side.
 		*SpanData
 	}
-	err *ErrorData
 }
