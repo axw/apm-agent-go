@@ -5,6 +5,8 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/elastic/go-sysinfo v1.0.1
 	github.com/google/go-cmp v0.3.0
+	github.com/google/pprof v0.0.0-20190930153522-6ce02741cba3
+	github.com/kr/pretty v0.1.0
 	github.com/pkg/errors v0.8.1
 	github.com/prometheus/procfs v0.0.3 // indirect
 	github.com/santhosh-tekuri/jsonschema v1.2.4

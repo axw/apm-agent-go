@@ -110,6 +110,7 @@ type TracerOptions struct {
 	active                bool
 	configWatcher         apmconfig.Watcher
 	breakdownMetrics      bool
+	profileSender         profileSender
 }
 
 // initDefaults updates opts with default values.
@@ -234,6 +235,9 @@ func (opts *TracerOptions) initDefaults(continueOnError bool) error {
 			opts.configWatcher = cw
 		}
 	}
+	if ps, ok := opts.Transport.(profileSender); ok {
+		opts.profileSender = ps
+	}
 
 	serviceName, serviceVersion, serviceEnvironment := initialService()
 	if opts.ServiceName == "" {
@@ -289,6 +293,7 @@ type Tracer struct {
 	configWatcher     chan apmconfig.Watcher
 	events            chan tracerEvent
 	breakdownMetrics  *breakdownMetrics
+	profileSender     profileSender
 
 	statsMu sync.Mutex
 	stats   TracerStats
@@ -340,6 +345,7 @@ func newTracer(opts TracerOptions) *Tracer {
 		breakdownMetrics:  newBreakdownMetrics(),
 		bufferSize:        opts.bufferSize,
 		metricsBufferSize: opts.metricsBufferSize,
+		profileSender:     opts.profileSender,
 		instrumentationConfigInternal: &instrumentationConfig{
 			local: make(map[string]func(*instrumentationConfigValues)),
 		},
@@ -407,6 +413,8 @@ type tracerConfig struct {
 	preContext, postContext int
 	sanitizedFieldNames     wildcard.Matchers
 	disabledMetrics         wildcard.Matchers
+	cpuProfileDuration      time.Duration
+	cpuProfileInterval      time.Duration
 }
 
 type tracerConfigCommand func(*tracerConfig)
@@ -548,6 +556,21 @@ func (t *Tracer) SetConfigWatcher(w apmconfig.Watcher) {
 	case <-t.closing:
 	case <-t.closed:
 	}
+}
+
+// SetCPUProfiling sets the duration and interval for recording and
+// sending CPU profiles to the APM Server.
+//
+// Setting either duration or interval to a non-positive value will
+// disable CPU profiling.
+//
+// NOTE this is an experimental API, and may be removed in a future
+// minor version, without being considered a breaking change.
+func (t *Tracer) SetCPUProfiling(duration, interval time.Duration) {
+	t.sendConfigCommand(func(cfg *tracerConfig) {
+		cfg.cpuProfileDuration = duration
+		cfg.cpuProfileInterval = interval
+	})
 }
 
 func (t *Tracer) sendConfigCommand(cmd tracerConfigCommand) {
@@ -1030,20 +1053,25 @@ func (t *Tracer) loop() {
 // first request is made.
 func (t *Tracer) jsonRequestMetadata() []byte {
 	var json fastjson.Writer
+	json.RawString(`{"metadata":`)
+	t.encodeRequestMetadata(&json)
+	json.RawString("}\n")
+	return json.Bytes()
+}
+
+func (t *Tracer) encodeRequestMetadata(json *fastjson.Writer) {
 	service := makeService(t.Service.Name, t.Service.Version, t.Service.Environment)
-	json.RawString(`{"metadata":{`)
-	json.RawString(`"system":`)
-	t.system.MarshalFastJSON(&json)
+	json.RawString(`{"system":`)
+	t.system.MarshalFastJSON(json)
 	json.RawString(`,"process":`)
-	t.process.MarshalFastJSON(&json)
+	t.process.MarshalFastJSON(json)
 	json.RawString(`,"service":`)
-	service.MarshalFastJSON(&json)
+	service.MarshalFastJSON(json)
 	if len(globalLabels) > 0 {
 		json.RawString(`,"labels":`)
-		globalLabels.MarshalFastJSON(&json)
+		globalLabels.MarshalFastJSON(json)
 	}
-	json.RawString("}}\n")
-	return json.Bytes()
+	json.RawByte('}')
 }
 
 // gatherMetrics gathers metrics from each of the registered

@@ -488,6 +488,21 @@ func TestTracerCaptureHeaders(t *testing.T) {
 	}
 }
 
+/*
+func TestTracerSendProfile(t *testing.T) {
+	tracer := apmtest.NewRecordingTracer()
+	defer tracer.Close()
+
+	err := tracer.Tracer.SendProfile(context.Background(), time.Second)
+	require.NoError(t, err)
+
+	payloads := tracer.Payloads()
+	require.Len(t, payloads.Profiles, 2)
+	pretty.Println(payloads.Profiles[0].SampleType)
+	pretty.Println(payloads.Profiles[1].SampleType)
+}
+*/
+
 type blockedTransport struct {
 	transport.Transport
 	unblocked chan struct{}
