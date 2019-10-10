@@ -25,6 +25,7 @@ COPY module/apmlambda/go.mod module/apmlambda/go.sum /go/src/go.elastic.co/apm/m
 COPY module/apmlogrus/go.mod module/apmlogrus/go.sum /go/src/go.elastic.co/apm/module/apmlogrus/
 COPY module/apmmongo/go.mod module/apmmongo/go.sum /go/src/go.elastic.co/apm/module/apmmongo/
 COPY module/apmot/go.mod module/apmot/go.sum /go/src/go.elastic.co/apm/module/apmot/
+COPY module/apmotel/go.mod module/apmotel/go.sum /go/src/go.elastic.co/apm/module/apmotel/
 COPY module/apmprometheus/go.mod module/apmprometheus/go.sum /go/src/go.elastic.co/apm/module/apmprometheus/
 COPY module/apmredigo/go.mod module/apmredigo/go.sum /go/src/go.elastic.co/apm/module/apmredigo/
 COPY module/apmrestful/go.mod module/apmrestful/go.sum /go/src/go.elastic.co/apm/module/apmrestful/
@@ -56,6 +57,7 @@ RUN cd /go/src/go.elastic.co/apm/module/apmlambda && go mod download
 RUN cd /go/src/go.elastic.co/apm/module/apmlogrus && go mod download
 RUN cd /go/src/go.elastic.co/apm/module/apmmongo && go mod download
 RUN cd /go/src/go.elastic.co/apm/module/apmot && go mod download
+RUN cd /go/src/go.elastic.co/apm/module/apmotel && go mod download
 RUN cd /go/src/go.elastic.co/apm/module/apmprometheus && go mod download
 RUN cd /go/src/go.elastic.co/apm/module/apmredigo && go mod download
 RUN cd /go/src/go.elastic.co/apm/module/apmrestful && go mod download
