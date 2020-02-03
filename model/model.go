@@ -668,4 +668,7 @@ type MetricsSpan struct {
 type Metric struct {
 	// Value holds the metric value.
 	Value float64 `json:"value"`
+
+	Values []float64 `json:"values,omitempty"`
+	Counts []int64   `json:"counts,omitempty"`
 }

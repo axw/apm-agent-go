@@ -1292,6 +1292,28 @@ func (v *Metric) MarshalFastJSON(w *fastjson.Writer) error {
 	w.RawByte('{')
 	w.RawString("\"value\":")
 	w.Float64(v.Value)
+	if v.Counts != nil {
+		w.RawString(",\"counts\":")
+		w.RawByte('[')
+		for i, v := range v.Counts {
+			if i != 0 {
+				w.RawByte(',')
+			}
+			w.Int64(v)
+		}
+		w.RawByte(']')
+	}
+	if v.Values != nil {
+		w.RawString(",\"values\":")
+		w.RawByte('[')
+		for i, v := range v.Values {
+			if i != 0 {
+				w.RawByte(',')
+			}
+			w.Float64(v)
+		}
+		w.RawByte(']')
+	}
 	w.RawByte('}')
 	return nil
 }

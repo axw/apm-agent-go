@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go.elastic.co/apm/internal/hdrhistogram"
+	"go.elastic.co/apm/model"
 )
 
 const (
@@ -53,6 +54,34 @@ func (hs *transactionHistograms) get(tx *TransactionData) *transactionHistogram 
 		h = val.(*transactionHistogram)
 	}
 	return h
+}
+
+func (hs *transactionHistograms) gather(out *Metrics) {
+	hs.groups.Range(func(key, value interface{}) bool {
+		k := key.(transactionGroupKey)
+		h := value.(*transactionHistogram)
+		bars := h.hdr.Distribution()
+		values := make([]float64, len(bars))
+		counts := make([]int64, len(bars))
+		for i, bar := range bars {
+			values[i] = float64(bar.To)
+			counts[i] = bar.Count
+		}
+		out.transactionGroupMetrics = append(out.transactionGroupMetrics, &model.Metrics{
+			Transaction: model.MetricsTransaction{
+				Type: k.transactionType,
+				Name: k.transactionName,
+				// TODO(axw) result
+			},
+			Samples: map[string]model.Metric{
+				"transaction.duration.distribution": {
+					Values: values,
+					Counts: counts,
+				},
+			},
+		})
+		return true
+	})
 }
 
 type transactionGroupKey struct {

@@ -48,6 +48,7 @@ func (g *builtinMetricsGatherer) GatherMetrics(ctx context.Context, m *Metrics) 
 	g.gatherSystemMetrics(m)
 	g.gatherMemStatsMetrics(m)
 	g.tracer.breakdownMetrics.gather(m)
+	g.tracer.transactionHistograms.gather(m)
 	return nil
 }
 
