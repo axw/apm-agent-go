@@ -1,6 +1,7 @@
 package apm
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -61,6 +62,8 @@ func (hs *transactionHistograms) gather(out *Metrics) {
 		k := key.(transactionGroupKey)
 		h := value.(*transactionHistogram)
 		bars := h.hdr.Distribution()
+		fmt.Printf("histogram %+v: %d bars\n", k, len(bars))
+
 		values := make([]float64, len(bars))
 		counts := make([]int64, len(bars))
 		for i, bar := range bars {

@@ -630,6 +630,32 @@ func (s *MetricsSpan) isZero() bool {
 	return *s == MetricsSpan{}
 }
 
+func (m *Metric) MarshalFastJSON(w *fastjson.Writer) error {
+	w.RawByte('{')
+	if m.Values != nil {
+		w.RawString(`"values":[`)
+		for i, value := range m.Values {
+			if i > 0 {
+				w.RawByte(',')
+			}
+			w.Float64(value)
+		}
+		w.RawString(`],"counts":[`)
+		for i, count := range m.Counts {
+			if i > 0 {
+				w.RawByte(',')
+			}
+			w.Int64(count)
+		}
+		w.RawByte(']')
+	} else {
+		w.RawString(`"value":`)
+		w.Float64(m.Value)
+	}
+	w.RawByte('}')
+	return nil
+}
+
 func writeHex(w *fastjson.Writer, v []byte) {
 	const hextable = "0123456789abcdef"
 	for _, v := range v {

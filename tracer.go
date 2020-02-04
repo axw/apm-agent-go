@@ -847,7 +847,9 @@ func (t *Tracer) loop() {
 						breakdownMetricsLimitWarningLogged = true
 					}
 				}
-				modelWriter.writeTransaction(event.tx.Transaction, event.tx.TransactionData)
+				if event.tx.Sampled() {
+					modelWriter.writeTransaction(event.tx.Transaction, event.tx.TransactionData)
+				}
 			case spanEvent:
 				modelWriter.writeSpan(event.span.Span, event.span.SpanData)
 			case errorEvent:
@@ -898,7 +900,9 @@ func (t *Tracer) loop() {
 							breakdownMetricsLimitWarningLogged = true
 						}
 					}
-					modelWriter.writeTransaction(event.tx.Transaction, event.tx.TransactionData)
+					if event.tx.Sampled() {
+						modelWriter.writeTransaction(event.tx.Transaction, event.tx.TransactionData)
+					}
 				case spanEvent:
 					modelWriter.writeSpan(event.span.Span, event.span.SpanData)
 				case errorEvent:
