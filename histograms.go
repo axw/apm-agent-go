@@ -77,7 +77,7 @@ func (hs *transactionHistograms) gather(out *Metrics) {
 				// TODO(axw) result
 			},
 			Samples: map[string]model.Metric{
-				"transaction.duration.distribution": {
+				"transaction_duration_distribution": {
 					Values: values,
 					Counts: counts,
 				},
