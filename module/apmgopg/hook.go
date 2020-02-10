@@ -23,7 +23,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/go-pg/pg/v9"
+	"github.com/go-pg/pg"
 
 	"go.elastic.co/apm"
 	"go.elastic.co/apm/module/apmsql"
@@ -31,7 +31,7 @@ import (
 )
 
 func init() {
-	stacktrace.RegisterLibraryPackage("github.com/go-pg/pg/v9")
+	stacktrace.RegisterLibraryPackage("github.com/go-pg/pg")
 }
 
 const elasticApmSpanKey = "go-apm-agent:span"
@@ -80,12 +80,12 @@ func (qh *queryHook) BeforeQuery(evt *pg.QueryEvent) {
 		User:     user,
 		Instance: database,
 	})
-	evt.Stash[elasticApmSpanKey] = span
+	evt.Data[elasticApmSpanKey] = span
 }
 
 // AfterQuery ends the initiated span from BeforeQuery
 func (qh *queryHook) AfterQuery(evt *pg.QueryEvent) {
-	span, ok := evt.Stash[elasticApmSpanKey]
+	span, ok := evt.Data[elasticApmSpanKey]
 	if !ok {
 		return
 	}
